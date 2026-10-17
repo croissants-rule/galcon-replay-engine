@@ -1,0 +1,8 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]

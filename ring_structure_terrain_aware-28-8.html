@@ -1,0 +1,3197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ring Structure — map reader</title>
+<style>
+  :root{
+    --bg:#0a0e17; --panel:#111a2b; --panel2:#0d1420; --line:#1f2c45;
+    --text:#e7ecf6; --text2:#8a97b3; --text3:#5b6884;
+    --amber:#e2a85a; --gold:#c9c25c; --teal:#6fd3b8; --blue:#7fa8f0; --violet:#a888e6; --magenta:#e07fc0;
+    --red:#e0596b; --slate:#3a4560; --home:#ffce6b; --ehome:#ff7a7a;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  .app{display:flex;flex-direction:column;height:100%;}
+
+  header{
+    padding:14px 24px; border-bottom:1px solid var(--line);
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:24px;
+  }
+  header > .hdr-title{grid-column:1; justify-self:start;}
+  header > .hdr-center{grid-column:2; justify-self:center; display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .hdr-hint{font-size:13px; color:var(--text2); font-weight:500;}
+  header > .filebox{grid-column:3; justify-self:end;}
+  header h1{font-size:17px; font-weight:600; margin:0; letter-spacing:0.2px;}
+  header .sub{color:var(--text2); font-size:12.5px; margin-top:3px;}
+  .filebox{display:flex; align-items:center; gap:10px;}
+  .filebox input[type=file]{display:none;}
+  .filebox label{
+    font-size:12.5px; color:var(--bg); background:var(--amber); padding:7px 13px; border-radius:6px;
+    cursor:pointer; font-weight:600; white-space:nowrap;
+  }
+  .filebox label:hover{filter:brightness(1.08);}
+  .filebox select{
+    font-family:var(--mono); font-size:12px; background:var(--panel2); color:var(--text);
+    border:1px solid var(--line); border-radius:5px; padding:5px 8px;
+  }
+  .hdr-stats{display:flex; align-items:stretch; gap:10px;}
+  .hs-side, .hs-vs{padding:8px 16px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); min-width:150px;}
+  .hs-who{font-size:12px; font-weight:600; color:var(--text3); margin-bottom:3px;}
+  .hs-nums{display:flex; gap:14px; font-size:14px; color:var(--text2); align-items:baseline;}
+  .hs-nums b{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums;}
+  .hs-you{border-color:rgba(255,206,107,0.45);} .hs-you .hs-who, .hs-you b{color:var(--home);}
+  .hs-them{border-color:rgba(255,122,122,0.45);} .hs-them .hs-who, .hs-them b{color:var(--ehome);}
+  .hs-vs{text-align:center; min-width:170px;}
+  .hs-v{font-size:18px; font-weight:700; color:var(--text); font-variant-numeric:tabular-nums; line-height:1.35;}
+  .filename{font-family:var(--mono); font-size:12px; color:var(--text2); max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
+  main{flex:1; display:flex; min-height:0;}
+  .stage{
+    flex:1; position:relative; display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(1px 1px at 12% 18%, #24304a 50%, transparent 51%),
+      radial-gradient(1px 1px at 78% 62%, #24304a 50%, transparent 51%),
+      radial-gradient(1.5px 1.5px at 34% 74%, #2a3856 50%, transparent 51%),
+      radial-gradient(1px 1px at 58% 22%, #24304a 50%, transparent 51%),
+      radial-gradient(1px 1px at 90% 40%, #24304a 50%, transparent 51%),
+      var(--bg);
+    padding:24px; overflow:auto;
+  }
+  .stage.drag{outline:2px dashed var(--amber); outline-offset:-10px;}
+  #empty{color:var(--text3); font-size:13.5px; text-align:center; max-width:360px; line-height:1.5;}
+  #empty b{color:var(--text2);}
+  svg#map{max-width:100%; height:auto; display:block; user-select:none; -webkit-user-select:none; touch-action:none;}
+  .assign-menu{
+    position:fixed; z-index:50; min-width:150px; padding:6px; border-radius:9px;
+    background:var(--panel); border:1px solid var(--line); box-shadow:0 10px 28px rgba(0,0,0,0.5);
+  }
+  .am-title{font-size:10.5px; color:var(--text3); padding:3px 6px 6px; font-family:var(--mono);}
+  .am-opt{
+    display:flex; align-items:center; gap:9px; width:100%; padding:7px 8px; border:none; border-radius:6px;
+    background:transparent; color:var(--text); font:inherit; font-size:12.5px; cursor:pointer; text-align:left;
+  }
+  .am-opt:hover{background:var(--panel2);}
+  .am-current{box-shadow:inset 0 0 0 1px var(--line);}
+  .am-current::after{content:"current"; margin-left:auto; font-size:10.5px; color:var(--text3);}
+  .am-sw{width:14px; height:14px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 1.5px rgba(255,255,255,0.15);}
+  svg#map text{font-family:var(--sans); font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:0.1px;}
+
+  aside{
+    width:340px; flex-shrink:0; border-left:1px solid var(--line); background:var(--panel);
+    display:flex; flex-direction:column; min-height:0;
+  }
+  .aside-scroll{overflow-y:auto; flex:1; min-height:0;}
+
+  .block{padding:16px 18px; border-bottom:1px solid var(--line);}
+  .block h2{font-size:11px; text-transform:none; color:var(--text2); font-weight:600; margin:0 0 10px;}
+
+  .archetype{
+    display:flex; align-items:center; gap:12px; padding:12px 14px; border-radius:8px;
+    background:var(--panel2); border:1px solid var(--line);
+  }
+  .archetype .badge{font-size:14px; font-weight:700; font-family:var(--mono);}
+  .archetype .depth{font-size:11.5px; color:var(--text2); margin-top:2px;}
+  .stat-row{display:flex; justify-content:space-between; font-size:12.5px; margin-top:10px; color:var(--text2);}
+  .stat-row b{color:var(--text); font-family:var(--mono); font-weight:600;}
+  .lbl-check{display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text2); margin-top:8px; cursor:pointer;}
+  .lbl-check input{accent-color:#e8b45a; width:14px; height:14px; margin:0; cursor:pointer;}
+  .lbl-note{color:#5b6884; font-size:11px;}
+  .combo-item{padding:5px 7px; margin:0 -7px 4px; border-radius:6px; border:1px solid transparent; cursor:pointer;}
+  .combo-item:hover{background:rgba(255,255,255,0.04); border-color:rgba(255,255,255,0.08);}
+  .combo-item-active{background:rgba(232,180,90,0.10); border-color:#e8b45a;}
+
+  .ctrl{margin-bottom:14px;}
+  .ctrl:last-child{margin-bottom:0;}
+  .ctrl label{display:flex; justify-content:space-between; font-size:12px; color:var(--text2); margin-bottom:6px;}
+  .ctrl label .val{font-family:var(--mono); color:var(--amber); font-weight:600;}
+  .ctrl input[type=range]{
+    width:100%; -webkit-appearance:none; height:3px; background:var(--line); border-radius:2px; outline:none;
+  }
+  .ctrl input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:var(--amber); cursor:pointer;
+    margin-top:-5px;
+  }
+  .ctrl .desc{font-size:11px; color:var(--text3); margin-top:5px; line-height:1.4;}
+  .mode-toggle{display:flex; gap:6px;}
+  .mode-btn{
+    flex:1; padding:8px 6px; font-size:12px; font-weight:600; border-radius:6px; cursor:pointer;
+    background:var(--panel2); color:var(--text2); border:1px solid var(--line);
+  }
+  .mode-btn-active{background:var(--amber); color:var(--bg); border-color:var(--amber);}
+.rc{border:1px solid var(--line); border-radius:8px; background:var(--panel2); padding:10px 12px; margin-top:10px;}
+  .rc-head{font-size:12px; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:8px;}
+  .rc-head .dot{width:9px; height:9px; border-radius:50%; display:inline-block;}
+  .rc-head .rc-prod{margin-left:auto; font-weight:500; color:var(--text3); font-variant-numeric:tabular-nums;}
+  .rc-verdict{display:flex; align-items:baseline; justify-content:space-between; font-size:13px; color:var(--text2);}
+  .rc-verdict b{font-size:16px; letter-spacing:0.5px;}
+  .rc-verdict b.yes{color:#ff7a7a;} .rc-verdict b.no{color:#4ade80;}
+  .rc-fight{font-size:11.5px; color:var(--text2); margin:3px 0 8px; font-variant-numeric:tabular-nums;}
+  .rc-rows{display:grid; grid-template-columns:1fr auto; row-gap:4px; column-gap:10px; font-size:11.5px; border-top:1px solid var(--line); padding-top:7px;}
+  .rc-rows span{color:var(--text3);} .rc-rows b{font-weight:600; text-align:right; font-variant-numeric:tabular-nums; color:var(--text);}
+  .rc-rows em{font-style:normal; font-weight:400; color:var(--text3); margin-left:4px;}
+  .rc-bar{margin-top:9px; border-radius:6px; padding:7px 10px; font-size:12px; font-weight:600; line-height:1.35;}
+  .rc-bar small{display:block; font-size:10.5px; font-weight:400; margin-top:3px; opacity:0.85;}
+  .rc-bar.amber{background:rgba(232,180,90,0.14); border:1px solid rgba(232,180,90,0.55); color:#e8b45a;}
+  .rc-bar.red{background:rgba(255,122,122,0.13); border:1px solid rgba(255,122,122,0.55); color:#ff7a7a;}
+  .cr-grid{display:grid; grid-template-columns:1fr auto; row-gap:1px; column-gap:10px; font-size:10.5px; margin-top:4px;}
+  .cr-grid span{color:var(--text3);} .cr-grid em{font-style:normal; opacity:0.7;}
+  .cr-grid b{font-weight:600; text-align:right; color:var(--text2); font-variant-numeric:tabular-nums;}
+  .cr-tag{font-family:var(--sans); font-size:9.5px; font-weight:600; border-radius:4px; padding:1px 5px; margin-left:6px; vertical-align:1px;}
+  .cr-tag.green{color:#4ade80; background:rgba(74,222,128,0.12); border:1px solid rgba(74,222,128,0.45);}
+  .cr-tag.red{color:#ff7a7a; background:rgba(255,122,122,0.12); border:1px solid rgba(255,122,122,0.45);}
+  .cr-tag.amber{color:#e8b45a; background:rgba(232,180,90,0.14); border:1px solid rgba(232,180,90,0.45);}
+  .why-list .planet-row .via{white-space:normal; text-align:right; max-width:62%;}
+  .cr-recipe{font-size:10.5px; margin-top:4px; line-height:1.7; color:var(--text2);}
+  .cr-recipe > span:first-child{color:var(--text3); margin-right:6px;}
+  .rc-send{display:inline-block; white-space:nowrap; background:rgba(139,149,173,0.12); border-radius:4px; padding:0 5px; margin:0 3px 2px 0; font-variant-numeric:tabular-nums;}
+  .rc-send b{color:var(--text); font-weight:700;}
+  .rc-wait{color:var(--text3);}
+  .mode-desc{font-size:11px; color:var(--text3); margin-top:10px; line-height:1.4;}
+  .block-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+  .block-head h2{margin:0;}
+  .corner-btn{
+    font-size:11px; font-weight:600; color:var(--text3); background:transparent; border:1px solid var(--line);
+    border-radius:5px; padding:3px 8px; cursor:pointer;
+  }
+  .corner-btn:hover{color:var(--text2); border-color:var(--text3);}
+  .corner-btn.open{color:var(--amber); border-color:var(--amber);}
+  #paramsBlock{background:var(--panel2);}
+  .params-note{
+    display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:14px;
+    font-size:11.5px; color:var(--text2);
+  }
+  .link-btn{font-size:11px; color:var(--amber); background:none; border:none; padding:0; cursor:pointer; white-space:nowrap;}
+  .link-btn:hover{text-decoration:underline;}
+
+  .legend{display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:12px;}
+  .legend .item{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text2);}
+  .legend .sw{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
+  .legend .sw-ring{width:9px; height:9px; border-radius:50%; flex-shrink:0; background:transparent; border:2px solid; box-sizing:border-box;}
+  .legend .sw-ring-dash{border-style:dashed;}
+
+  .grouplist{padding:0 18px 16px;}
+  .grouplist h3{
+    font-size:11px; color:var(--text2); font-weight:600; margin:14px 0 6px;
+    display:flex; align-items:center; gap:7px;
+  }
+  .grouplist h3 .dot{width:8px; height:8px; border-radius:50%; flex-shrink:0;}
+  .planet-row{
+    display:flex; justify-content:space-between; gap:8px; font-family:var(--mono); font-size:11.5px;
+    padding:4px 0; color:var(--text2); border-bottom:1px solid #16203380;
+  }
+  .planet-row .n{color:var(--text);}
+  .planet-row .via{color:var(--text3); font-size:10.5px; text-align:right;}
+
+  ::-webkit-scrollbar{width:9px;}
+  ::-webkit-scrollbar-thumb{background:var(--line); border-radius:5px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+<div id="assignMenu" class="assign-menu" style="display:none"></div>
+<div class="app">
+  <header>
+    <div class="hdr-title">
+      <h1>Ring structure</h1>
+      <div class="sub">Reads only the t=0 map from a replay — no play data needed.</div>
+    </div>
+    <div class="hdr-center">
+    <div id="hdrHint" class="hdr-hint" style="display:none">Click and hold a planet briefly to assign it.</div>
+    <div id="hdrStats" class="hdr-stats" style="display:none">
+      <div class="hs-side hs-you">
+        <div class="hs-who">Player 1</div>
+        <div class="hs-nums"><span><b id="hsProdMe">0</b> prod</span><span><b id="hsCostMe">0</b> cost</span></div>
+      </div>
+      <div class="hs-vs">
+        <div class="hs-who">Versus timer</div>
+        <div class="hs-v" id="hsVersus">even</div>
+      </div>
+      <div class="hs-side hs-them">
+        <div class="hs-who">Player 2</div>
+        <div class="hs-nums"><span><b id="hsProdThem">0</b> prod</span><span><b id="hsCostThem">0</b> cost</span></div>
+      </div>
+    </div>
+    </div>
+    <div class="filebox">
+      <label for="file">Load replay .jsonl</label>
+      <input type="file" id="file" accept=".jsonl,.json,.txt" />
+      <span class="filename" id="filename"></span>
+      <select id="gameSelect" style="display:none"></select>
+    </div>
+  </header>
+
+  <main>
+    <div class="stage" id="stage">
+      <div id="empty">Drop a <b>.jsonl</b> replay here, or use <b>Load replay</b> above.<br/><br/>Only the map header (chunk 0) is read — the rest of the file is ignored.</div>
+      <svg id="map" style="display:none"></svg>
+    </div>
+
+    <aside>
+      <div class="aside-scroll">
+        <div class="block" id="modeBlock">
+          <div class="block-head">
+            <h2>Model</h2>
+            <button id="paramsToggle" class="corner-btn" type="button" title="Model parameters (defaults)">⚙ Parameters</button>
+          </div>
+          <div class="mode-toggle">
+            <button id="modeStructural" class="mode-btn mode-btn-active">Structural rings</button>
+            <button id="modeTimeline" class="mode-btn">Predicted timeline</button>
+            <button id="modeSandbox" class="mode-btn">Sandbox</button>
+          </div>
+          <div class="mode-desc" id="modeDesc">
+            Safety/reach/payoff-based order (1/2/3...), calibrated against real capture behavior.
+          </div>
+        </div>
+
+        <div class="block" id="paramsBlock" style="display:none">
+          <div class="params-note">
+            <span>Default values, not recommended to change.</span>
+            <button id="paramsReset" class="link-btn" type="button">Reset to defaults</button>
+          </div>
+          <div class="ctrl">
+            <label>Home reserve <span class="val" id="v-reserve">83</span></label>
+            <input type="range" id="reserve" min="0" max="99" step="1" value="83" />
+            <div class="desc">Ships kept on home at t=0 before anything counts as spendable. Structural rings only -- Sandbox derives safe spending from the kill check instead.</div>
+          </div>
+          <div class="ctrl">
+            <label>Safety ratio <span class="val" id="v-safety">1.00</span></label>
+            <input type="range" id="safety" min="0.3" max="1.0" step="0.01" value="1.0" />
+            <div class="desc">You must be this much closer than the enemy for a planet to count as yours.</div>
+          </div>
+          <div class="ctrl">
+            <label>Reach <span class="val" id="v-reach">0.45</span></label>
+            <input type="range" id="reach" min="0.1" max="1.0" step="0.01" value="0.45" />
+            <div class="desc">Max launch distance, as a fraction of home-to-home distance.</div>
+          </div>
+          <div class="ctrl">
+            <label>Max payoff <span class="val" id="v-payoff">20</span>s</label>
+            <input type="range" id="payoff" min="3" max="40" step="1" value="20" />
+            <div class="desc">Ignore planets whose 25·cost/prod payoff time exceeds this.</div>
+          </div>
+          <div class="ctrl">
+            <label>Max wait <span class="val" id="v-wait">30</span>s</label>
+            <input type="range" id="wait" min="5" max="90" step="1" value="30" />
+            <div class="desc">Max production time to fund an order-2+ take from an unlocker.</div>
+          </div>
+          <div class="ctrl">
+            <label>Home production share <span class="val" id="v-share">0.5</span></label>
+            <input type="range" id="share" min="0" max="1" step="0.05" value="0.5" />
+            <div class="desc">Fraction of home's own production assumed available to help fund a forward take.</div>
+          </div>
+          <div class="ctrl">
+            <label>Score horizon <span class="val" id="v-horizon">60</span>s</label>
+            <input type="range" id="horizon" min="20" max="180" step="5" value="60" />
+            <div class="desc">Expansions are ranked by ship lead at this time, after the other player's best reply.</div>
+          </div>
+          <div class="ctrl">
+            <label>Contest tolerance <span class="val" id="v-tol">0.1</span></label>
+            <input type="range" id="tol" min="0" max="0.3" step="0.01" value="0.1" />
+            <div class="desc">How close the distance ratio must be to 1 to count as contested.</div>
+          </div>
+        </div>
+
+        <div class="block" id="labelsBlock">
+          <h2>Planet labels</h2>
+          <label class="lbl-check"><input type="checkbox" id="lblProd" checked /> Show prod values</label>
+          <label class="lbl-check"><input type="checkbox" id="lblCost" checked /> Show neutral costs</label>
+          <label class="lbl-check"><input type="checkbox" id="lblPayoff" /> Show payoff times <span class="lbl-note">(50·cost/prod)</span></label>
+          <label class="lbl-check"><input type="checkbox" id="lblId" /> Show planet ID #s</label>
+        </div>
+
+        <div class="block" id="summaryBlock" style="display:none">
+          <h2>Archetype</h2>
+          <div class="archetype">
+            <div>
+              <div class="badge" id="archBadge">—</div>
+              <div class="depth" id="archDepth">—</div>
+            </div>
+          </div>
+          <div class="stat-row"><span>Order 1</span><b id="statO1">—</b></div>
+          <div class="stat-row"><span>Order 2</span><b id="statO2">—</b></div>
+          <div class="stat-row"><span>Order 3+</span><b id="statO3">—</b></div>
+          <div class="stat-row"><span>Contested</span><b id="statContested">—</b></div>
+          <div class="stat-row"><span>Never (this model)</span><b id="statNever">—</b></div>
+        </div>
+
+        <div class="block" id="sandboxBlock" style="display:none">
+          <h2>Sandbox</h2>
+          <div class="stat-row"><span>Player 1 planets</span><b id="sbCountMine">0</b></div>
+          <div class="stat-row"><span>Player 2 planets</span><b id="sbCountTheirs">0</b></div>
+          <div class="stat-row"><span>Eligible for Player 1</span><b id="sbCountEligMine">0</b></div>
+          <div class="stat-row"><span>Eligible for Player 2</span><b id="sbCountEligTheirs">0</b></div>
+          <div class="stat-row"><span>Punish opportunities</span><b id="sbCountPunish">0</b></div>
+          <div class="ctrl" style="margin-top:12px;">
+            <label>Defense that arrives <span class="val" id="v-defEff">90</span>%</label>
+            <input type="range" id="defEff" min="50" max="100" step="1" value="90" />
+          </div>
+          <div class="ctrl" style="margin-top:6px;">
+            <label>Reply reaction time <span class="val" id="v-react">1.5</span>s</label>
+            <input type="range" id="react" min="0" max="5" step="0.25" value="1.5" />
+          </div>
+          <label class="lbl-check" style="margin-top:8px;"><input type="checkbox" id="allowTrade" checked /> Allow clusters that survive losing their front planet</label>
+          <div id="sbRush"></div>
+          <button id="sbClearFocus" class="mode-btn mode-btn-active" style="width:100%;margin-top:8px;display:none;">Clear combo highlight -- show all rings</button>
+          <button id="sandboxReset" class="mode-btn" style="width:100%;margin-top:8px;">Reset assignments</button>
+
+          <div class="legend" style="margin-top:12px;">
+            <div class="item"><span class="sw" style="background:var(--home)"></span>assigned to Player 1</div>
+            <div class="item"><span class="sw" style="background:var(--ehome)"></span>assigned to Player 2</div>
+            <div class="item"><span class="sw-ring" style="border-color:#4ade80"></span>green ring — Player 1 can take it now, safely</div>
+            <div class="item"><span class="sw-ring" style="border-color:#ff7a7a"></span>red ring — Player 2 can take it now, safely</div>
+            <div class="item"><span class="sw-ring sw-ring-dash" style="border-color:#ff7a7a;border-width:1px"></span>faint red dashed — Player 2 can reach it by chaining (not instantly)</div>
+            <div class="item"><span class="sw-ring sw-ring-dash" style="border-color:#4ade80;border-width:1px"></span>faint green dashed — Player 1 can reach it by chaining (not instantly)</div>
+            <div class="item"><span class="sw-ring sw-ring-dash" style="border-color:#ffce6b"></span>gold dashed — punish only: Player 1's because of Player 2's gap, not the baseline</div>
+          </div>
+        </div>
+
+        <div class="block" id="legendBlock" style="border-bottom:none;">
+          <h2>Legend</h2>
+          <div class="legend">
+            <div class="item"><span class="sw" style="background:var(--home)"></span>your home</div>
+            <div class="item"><span class="sw" style="background:var(--ehome)"></span>enemy home</div>
+            <div class="item"><span class="sw" style="background:var(--amber)"></span>order/wave 1</div>
+            <div class="item"><span class="sw" style="background:var(--teal)"></span>order/wave 2</div>
+            <div class="item"><span class="sw" style="background:var(--blue)"></span>order/wave 3</div>
+            <div class="item"><span class="sw" style="background:var(--violet)"></span>order/wave 4</div>
+            <div class="item"><span class="sw" style="background:var(--magenta)"></span>order/wave 5+</div>
+            <div class="item"><span class="sw" style="background:var(--red)"></span>contested (structural only)</div>
+            <div class="item"><span class="sw" style="background:var(--slate)"></span>never reached</div>
+          </div>
+        </div>
+
+        <div id="groups"></div>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script>
+// ── constants matching mod1.lua / map_structure.py exactly ─────────────────
+const SHIPS_PER_PROD_PER_SEC = 1 / 50.0;   // calc_versus_timer: prod/50 ships per second
+const ORDER_COLORS = ["", "var(--amber)", "var(--teal)", "var(--blue)", "var(--violet)", "var(--magenta)"];
+const ORDER_HEX    = ["", "#e2a85a", "#6fd3b8", "#7fa8f0", "#a888e6", "#e07fc0"];
+
+// ── geometry_engine.py port: obstacle-aware transit-time model ─────────────
+// Same fitted curves used by map_travel_matrix.py -- single-obstacle
+// sigmoid, same-side chain span model, straddling-gate table -- combined
+// multiplicatively across along-path clusters. See geometry_engine.py's
+// own header for the full derivation/validation. This tool has no per-
+// match replay events to self-calibrate a baseline against (splitGames
+// below only keeps the header/map, not events), so it always uses the
+// corpus-measured FALLBACK_BASELINE_SPEED from map_travel_matrix.py.
+const SIGMOID_FLOOR = 93.1, SIGMOID_CEIL = 98.8, SIGMOID_C50 = 9.8, SIGMOID_K = 1.0;
+const SIGMOID_NEGLIGIBLE_CLEARANCE = SIGMOID_C50 + 6 * SIGMOID_K; // ~15.8u
+const GATE_TABLE = [
+  [-17.0, 66.8], [-12.0, 48.2], [-7.5, 87.0], [-1.5, 79.7], [5.0, 87.2],
+  [11.0, 88.5], [17.0, 92.0], [23.5, 93.7], [30.0, 95.7], [36.5, 98.5],
+  [45.0, 100.3], [57.5, 99.8], [72.5, 99.6], [90.0, 99.8],
+];
+const GATE_FULLY_OPEN_GAP = 90.0;
+const SPAN_FLOOR = 84.516, SPAN_CEIL = 97.170, SPAN_C50 = 187.530, SPAN_K = 46.749;
+const REFERENCE_CLEARANCE = 22.0 - planetRadius(50); // ~5.06u -- clearance the span model was fit at
+
+// Corpus-measured fallback baseline speed (map_travel_matrix.py's
+// FALLBACK_BASELINE_SPEED, mean of per-file self-calibrations, 39.7-41.65
+// u/s across 5+ real replay files). Replaces the old flat VAC_SPEED=44.23
+// constant, which used a different, less-validated methodology AND (the
+// real bug) fed straight-line dist() with zero obstacle awareness into
+// every prediction in this tool's "Predicted timeline" mode.
+const BASELINE_SPEED = 41.0;
+
+function sigmoidPct(clearance) {
+  let z = -(clearance - SIGMOID_C50) / SIGMOID_K;
+  z = Math.max(-700, Math.min(700, z));
+  return SIGMOID_FLOOR + (SIGMOID_CEIL - SIGMOID_FLOOR) / (1 + Math.exp(z));
+}
+
+function gatePct(freeGap) {
+  if (freeGap >= GATE_FULLY_OPEN_GAP) return 100.0;
+  const pts = GATE_TABLE;
+  if (freeGap <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    if (x0 <= freeGap && freeGap <= x1) {
+      if (x1 === x0) return y0;
+      const frac = (freeGap - x0) / (x1 - x0);
+      return y0 + frac * (y1 - y0);
+    }
+  }
+  return pts[pts.length - 1][1];
+}
+
+function spanPct(span) {
+  let z = -(SPAN_C50 - span) / SPAN_K;
+  z = Math.max(-700, Math.min(700, z));
+  return SPAN_FLOOR + (SPAN_CEIL - SPAN_FLOOR) / (1 + Math.exp(z));
+}
+
+function obstaclesAlongPath(obstacles, src, tgt, margin = SIGMOID_NEGLIGIBLE_CLEARANCE) {
+  const [x0, y0] = src, [x1, y1] = tgt;
+  const dx = x1 - x0, dy = y1 - y0;
+  const lengthSq = dx * dx + dy * dy;
+  const pathLen = Math.hypot(dx, dy);
+  const result = [];
+  if (lengthSq < 1e-9) return result;
+  for (const obs of obstacles) {
+    const tRaw = ((obs.x - x0) * dx + (obs.y - y0) * dy) / lengthSq;
+    const tClamped = Math.max(0, Math.min(1, tRaw));
+    const projX = x0 + tClamped * dx, projY = y0 + tClamped * dy;
+    const perp = Math.hypot(obs.x - projX, obs.y - projY);
+    const clearance = perp - obs.r;
+    if (clearance > margin) continue;
+    const cross = dx * (obs.y - y0) - dy * (obs.x - x0);
+    const side = cross > 0 ? 1 : (cross < 0 ? -1 : 0);
+    result.push({ obs, clearance, side, t: tRaw, alongDist: tRaw * pathLen });
+  }
+  result.sort((a, b) => a.alongDist - b.alongDist);
+  return result;
+}
+
+function combineGroup(group) {
+  // Combines one along-path cluster of obstacles into a single %-of-
+  // baseline. Direct mirror of geometry_engine.py's _combine_group()
+  // (the mixed chain+straddle and off-reference-clearance cases are
+  // documented there as flagged/untested assumptions; this port applies
+  // the same heuristic without surfacing the flag in the UI).
+  if (group.length === 1) return sigmoidPct(group[0].clearance);
+
+  const sides = new Set(group.map(o => o.side));
+  if (group.length === 2 && sides.size === 2 && !sides.has(0)) {
+    const [a, b] = group;
+    return gatePct(a.clearance + b.clearance);
+  }
+
+  const bySide = new Map();
+  for (const o of group) {
+    if (!bySide.has(o.side)) bySide.set(o.side, []);
+    bySide.get(o.side).push(o);
+  }
+  let pct = 100.0;
+  for (const members of bySide.values()) {
+    if (members.length === 1) {
+      pct *= sigmoidPct(members[0].clearance) / 100.0;
+      continue;
+    }
+    const alongs = members.map(o => o.alongDist);
+    const span = Math.max(...alongs) - Math.min(...alongs);
+    const baseP = spanPct(span);
+    const meanClearance = members.reduce((s, o) => s + o.clearance, 0) / members.length;
+    const refP = sigmoidPct(REFERENCE_CLEARANCE);
+    const scale = refP ? sigmoidPct(meanClearance) / refP : 1.0;
+    const p = Math.max(0, Math.min(100, baseP * scale));
+    pct *= p / 100.0;
+  }
+  return pct;
+}
+
+function predictTransitPct(obstacles, src, tgt, clusterWindow = 20.0) {
+  // %-of-baseline speed for a src->tgt flight through an obstacle field.
+  // Mirrors geometry_engine.py's predict_transit() (pct-of-baseline part
+  // only -- this tool has no per-leg ships-sent data to drive the
+  // obstacle-hesitation seconds correction, so that term is omitted).
+  const onPath = obstaclesAlongPath(obstacles, src, tgt);
+  if (!onPath.length) return 100.0;
+  const clusters = [];
+  let current = [onPath[0]];
+  for (let i = 1; i < onPath.length; i++) {
+    const o = onPath[i];
+    if (o.alongDist - current[current.length - 1].alongDist <= clusterWindow) current.push(o);
+    else { clusters.push(current); current = [o]; }
+  }
+  clusters.push(current);
+  let combined = 100.0;
+  for (const cluster of clusters) combined *= combineGroup(cluster) / 100.0;
+  return combined;
+}
+
+function obstaclesExcluding(obstaclesAll, ...idsToExclude) {
+  const skip = new Set(idsToExclude);
+  return obstaclesAll.filter(o => !skip.has(o.n));
+}
+
+function travelTime(a, b, obstaclesAll) {
+  // Obstacle-aware replacement for dist(a,b)/VAC_SPEED. Ported from
+  // map_travel_matrix.py's compute_matrix(): launch point is the source
+  // planet's surface offset toward the target; the target's CENTER is
+  // used for the obstacle-clearance geometry (matches how pct_of_baseline
+  // was calibrated/validated); the reported distance/time uses the real
+  // surface-to-surface distance. `obstaclesAll` should already exclude a
+  // and b themselves (see obstaclesExcluding).
+  const centerDist = dist(a, b);
+  if (centerDist < 1e-6) return 0;
+  const ux = (b.x - a.x) / centerDist, uy = (b.y - a.y) / centerDist;
+  const ra = a.r != null ? a.r : planetRadius(a.prod || 0);
+  const rb = b.r != null ? b.r : planetRadius(b.prod || 0);
+  const launch = [a.x + ra * ux, a.y + ra * uy];
+  const pct = predictTransitPct(obstaclesAll, launch, [b.x, b.y]);
+  const speed = BASELINE_SPEED * pct / 100.0;
+  const realDist = Math.max(0, centerDist - ra - rb);
+  return speed > 0 ? realDist / speed : Infinity;
+}
+
+// ── Tunneling ──────────────────────────────────────────────────────────────
+// A fleet that meets one of its OWN planets lands on it and relaunches from
+// the far side immediately: the planet's diameter is crossed for free (ship
+// radius ignored -- ships are tiny). So travel between two points is the
+// fastest route through the mover's own planets, not one straight leg, and
+// an own planet in the way is a shortcut instead of an obstacle. Each leg is
+// still surface-to-surface and terrain-aware (travelTime), so chaining legs
+// through a planet automatically skips its diameter. esparano's vacuum bot
+// tracks the same thing (tunnel_dist in bot_vacuumbot.lua).
+//
+// legTime: memoized single terrain-aware leg, keyed per obstacle set.
+const _legCache = new WeakMap();
+function legTime(a, b, obstaclesAll) {
+  let m = _legCache.get(obstaclesAll);
+  if (!m) { m = new Map(); _legCache.set(obstaclesAll, m); }
+  const key = a.n + "|" + b.n;
+  let t = m.get(key);
+  if (t === undefined) {
+    t = travelTime(a, b, obstaclesExcluding(obstaclesAll, a.n, b.n));
+    m.set(key, t);
+  }
+  return t;
+}
+
+// routeTime: earliest arrival at `dst` for ships leaving `src` at t0,
+// tunneling through any planet in `via` ({p, release}) -- release = when
+// that planet becomes yours (you can't pass through it before). Dijkstra
+// over the (small) set of own planets. Returns an absolute time.
+function routeTime(src, dst, via, obstaclesAll, t0 = 0) {
+  const nodes = via.filter(v => v.p.n !== src.n && v.p.n !== dst.n);
+  let result = t0 + legTime(src, dst, obstaclesAll);
+  if (!nodes.length) return result;
+  const at = nodes.map(v => Math.max(t0 + legTime(src, v.p, obstaclesAll), v.release));
+  const done = nodes.map(() => false);
+  for (;;) {
+    let i = -1;
+    for (let k = 0; k < nodes.length; k++) if (!done[k] && (i < 0 || at[k] < at[i])) i = k;
+    if (i < 0 || at[i] >= result) break;   // nothing left that could beat the best route
+    done[i] = true;
+    result = Math.min(result, at[i] + legTime(nodes[i].p, dst, obstaclesAll));
+    for (let j = 0; j < nodes.length; j++) {
+      if (done[j]) continue;
+      const cand = Math.max(at[i] + legTime(nodes[i].p, nodes[j].p, obstaclesAll), nodes[j].release);
+      if (cand < at[j]) at[j] = cand;
+    }
+  }
+  return result;
+}
+
+// Own planets as tunnel nodes: each is passable from its capture time.
+function viaOf(planets) {
+  return planets.map(p => ({ p, release: p.capturedAt || 0 }));
+}
+
+// One wave of direct sends (a planet with enough stored ships sends cost+1
+// to a target), tunnel-aware. "Send the stack to the new planet, relaunch
+// the surplus onward": a planet claimed earlier in THIS wave becomes a
+// tunnel node from the moment it's captured, so later sends in the same
+// wave can route through it. Shared by the timeline sequencer and the
+// sandbox's combo simulation.
+function planDirectWave(myPlanets, remaining, obstaclesAll) {
+  const made = [];
+  const claimed = new Set();
+  const pending = [];   // {p, release} for planets captured in this wave
+  for (;;) {
+    const via = viaOf(myPlanets).concat(pending);
+    let best = null;
+    for (const q of remaining) {
+      if (claimed.has(q.n)) continue;
+      for (let pi = 0; pi < myPlanets.length; pi++) {
+        const p = myPlanets[pi];
+        if (p.ships < q.cost + 1) continue;
+        const t = routeTime(p, q, via, obstaclesAll, p.busyUntil || 0);
+        if (best === null || t < best.t) best = { t, pi, q };
+      }
+    }
+    if (best === null) break;
+    myPlanets[best.pi].ships -= (best.q.cost + 1);
+    claimed.add(best.q.n);
+    pending.push({ p: best.q, release: best.t });
+    made.push({ q: best.q, t: best.t });
+  }
+  return made;
+}
+
+// ── vacuum.py port: esparano's time-to-capture + the parallel sequencer ────
+// travel legs now go through travelTime() (obstacle-aware) instead of a
+// flat dist()/speed division -- see BASELINE_SPEED comment above.
+function vacTimeToCapture(target, myPlanets, obstaclesAll) {
+  // Direct JS mirror of vacuum.py's time_to_capture(). Returns
+  // [seconds, contributorIndices] or [Infinity, []].
+  let amountLeft = target.cost + 1;
+  if (!myPlanets.length) return [Infinity, []];
+
+  // each contributor's ships tunnel through your other planets (routeTime)
+  const via = viaOf(myPlanets);
+  const times = myPlanets.map(p => routeTime(p, target, via, obstaclesAll, p.busyUntil || 0));
+
+  const order = myPlanets
+    .map((p, i) => i)
+    .sort((a, b) => times[a] - times[b]);
+
+  let timeElapsed = 0, attackingProd = 0;
+  const contributors = [];
+
+  for (const idx of order) {
+    const p = myPlanets[idx];
+    const arrival = times[idx];
+    const diff = arrival - timeElapsed;
+    const produced = diff * attackingProd * SHIPS_PER_PROD_PER_SEC;
+    if (attackingProd > 0 && amountLeft - produced < 0) {
+      timeElapsed += amountLeft / (attackingProd * SHIPS_PER_PROD_PER_SEC);
+      amountLeft = 0;
+      break;
+    }
+    timeElapsed = arrival;
+    amountLeft -= produced;
+    const stored = p.ships || 0;
+    contributors.push(idx);
+    if (stored >= amountLeft) { amountLeft = 0; break; }
+    amountLeft -= stored;
+    attackingProd += p.prod || 0;
+  }
+
+  if (amountLeft > 0) {
+    if (attackingProd <= 0) return [Infinity, []];
+    timeElapsed += amountLeft / (attackingProd * SHIPS_PER_PROD_PER_SEC);
+  }
+  return [timeElapsed, contributors];
+}
+
+function vacPredictSequenceParallel(header, side) {
+  // Direct JS mirror of vacuum.py's predict_sequence_parallel(). Travel
+  // legs are now obstacle-aware (see travelTime()/BASELINE_SPEED above);
+  // everything else -- real ships/production math throughout -- is
+  // unchanged from the version validated at median error 1.21s across
+  // 1928 matched captures in 394 real games (vs 10.76s for the old
+  // sequential-only greedy sequencer; that validation predates this
+  // terrain-model port and should be re-checked against it).
+  const p1n = header.player_n, p2n = header.enemy_n;
+  const meN = side === "player" ? p1n : p2n;
+
+  // Every planet on the map is a potential obstacle for every leg,
+  // regardless of ownership (matches map_travel_matrix.py) -- built once
+  // here and filtered per-leg via obstaclesExcluding().
+  const obstaclesAll = header.map.map(p => ({ n: p.n, x: p.x, y: p.y, r: planetRadius(p.prod) }));
+
+  let myPlanets = [];
+  let neutrals = [];
+  for (const p of header.map) {
+    const rec = { n: p.n, x: p.x, y: p.y, prod: p.prod, ships: p.ships, cost: p.ships, busyUntil: 0.0 };
+    if (p.owner === meN) myPlanets.push(rec);
+    else if (p.owner !== p1n && p.owner !== p2n) neutrals.push(rec);
+  }
+  if (!myPlanets.length) throw new Error(`no home planet found for side=${side}`);
+
+  const timeline = [];
+  let remaining = neutrals.slice();
+  let waveNum = 0;
+
+  while (remaining.length) {
+    const wave = planDirectWave(myPlanets, remaining, obstaclesAll);   // tunnel-aware
+    if (wave.length) {
+      waveNum++;
+      for (const m of wave) {
+        const q = m.q, t = m.t;
+        timeline.push({ n: q.n, t, prod: q.prod, cost: q.cost, nContributors: 1, mode: "direct", wave: waveNum });
+        myPlanets.push({ n: q.n, x: q.x, y: q.y, prod: q.prod, ships: 0, busyUntil: t, capturedAt: t });
+      }
+      const capturedN = new Set(wave.map(m => m.q.n));
+      remaining = remaining.filter(r => !capturedN.has(r.n));
+      continue;
+    }
+
+    let best = null; // {t, q, contribs}
+    for (const q of remaining) {
+      const [t, contribs] = vacTimeToCapture(q, myPlanets, obstaclesAll);
+      if (best === null || t < best.t) best = { t, q, contribs };
+    }
+    if (best === null || !isFinite(best.t)) break;
+    for (const idx of best.contribs) {
+      myPlanets[idx].ships = 0;
+      myPlanets[idx].busyUntil = Math.max(myPlanets[idx].busyUntil || 0, best.t);
+    }
+    waveNum++;
+    timeline.push({ n: best.q.n, t: best.t, prod: best.q.prod, cost: best.q.cost,
+                    nContributors: best.contribs.length, mode: "circle", wave: waveNum });
+    myPlanets.push({ n: best.q.n, x: best.q.x, y: best.q.y, prod: best.q.prod, ships: 0, busyUntil: best.t, capturedAt: best.t });
+    remaining = remaining.filter(r => r.n !== best.q.n);
+  }
+
+  timeline.sort((a, b) => a.t - b.t);
+  return timeline;
+}
+
+function analyzeTimeline(header) {
+  const sw = header.w || 520, sh = header.h || 360;
+  const p1n = header.player_n, p2n = header.enemy_n;
+  const home = header.map.find(p => p.owner === p1n);
+  const ehome = header.map.find(p => p.owner === p2n);
+  if (!home || !ehome) throw new Error("could not find both home planets in header map");
+
+  const timeline = vacPredictSequenceParallel(header, "player");
+  const byN = {};
+  for (const p of header.map) if (p.owner !== p1n && p.owner !== p2n) byN[p.n] = { ...p, cost: p.ships };
+  const waveOf = {}, timeOf = {}, modeOf = {}, contribOf = {};
+  for (const e of timeline) { waveOf[e.n] = e.wave; timeOf[e.n] = e.t; modeOf[e.n] = e.mode; contribOf[e.n] = e.nContributors; }
+
+  const maxWave = timeline.length ? Math.max(...timeline.map(e => e.wave)) : 0;
+  const totalTime = timeline.length ? timeline[timeline.length - 1].t : 0;
+
+  return { sw, sh, home, ehome, byN, timeline, waveOf, timeOf, modeOf, contribOf, maxWave, totalTime,
+           candidates: Object.values(byN) };
+}
+
+function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function mirrorOf(p, sw, sh) { return { x: sw - p.x, y: sh - p.y }; }
+
+// ── punish_engine.py port: baseline-vs-live boundary + punish sets ─────────
+// Locked definitions (2026-09-23): BASELINE eheld = mirror(your held set)
+// -- the assumed-symmetric-optimal opponent analyze() already models.
+// LIVE eheld = the opponent's ACTUAL held set -- no mirror assumption.
+// PUNISH SET = candidates eligible under LIVE but not under BASELINE --
+// planets only takeable because of the opponent's specific deviation.
+// Nothing here restricts a punish-set member to "your side" of the map
+// -- a real hole in the opponent's coverage can push the live boundary
+// past the home-home midline into their nominal territory, letting you
+// take multiple planets at once from a single missed pickup.
+//
+// One-shot eligibility against ACTUAL held sets (no from-scratch order
+// recursion needed -- a live/sandbox position already gives real
+// holdings for both sides directly).
+function bestUnlockWait(q, held, homeShare) {
+  // Production-funded fallback, direct port of analyze()'s order-2+
+  // "unlockers" math (Structural rings mode): if q can't be paid for
+  // out of the instant ship budget, can some ALREADY-held planet
+  // (other than home) fund it via its own production, plus a homeShare
+  // cut of home's production, within a bounded wait? held[0] is always
+  // home/ehome by convention (see heldP1/heldP2 construction); home
+  // itself isn't a candidate unlocker here since order-1 already covers
+  // "paid for straight from home."
+  const homeP = held[0];
+  let best = Infinity;
+  for (const P of held.slice(1)) {
+    const supply = (P.prod + (homeP.prod || 0) * homeShare) * SHIPS_PER_PROD_PER_SEC;
+    if (supply <= 0) continue;
+    const wait = (q.cost + 1) / supply;
+    if (wait < best) best = wait;
+  }
+  return best;
+}
+
+// Ships the enemy needs to punish a fresh capture: you land with ~1 ship
+// on it, so 2 retakes it. Punishing does NOT require affording the
+// neutral's full cost -- only a snipe after you've paid for it.
+const SNIPE_SHIPS = 2;
+
+// Defense at arrival: how many ships the defender can have on their home
+// when an all-in fleet launched now from attackerHome lands. Multi-planet
+// PD from the swap model (theory-and-findings.md, marked UNVERIFIED there):
+//   def = homeShips + sum_j prod_j/50 * max(0, D - t(j -> defenderHome))
+// Home's own production counts for the whole flight (t = 0); every other
+// held planet only helps with what it produces AND can fly home before the
+// attack lands. Freshly painted planets hold ~0 ships, so they contribute
+// production only.
+// A side's painted planets as tunnel nodes, released when first capturable:
+// flight time from that side's home (Sandbox paints = "sent from home at t=0").
+function paintedVia(held, obstaclesAll) {
+  const home = held[0];
+  return held.slice(1).map(p => ({ p, release: legTime(home, p, obstaclesAll) }));
+}
+
+function defenseAtArrival(defHeld, defHomeShips, attHeld, obstaclesAll) {
+  const defHome = defHeld[0];
+  // attacker's all-in: fleet assumed to sit on whichever of its planets is
+  // fastest to the defender's home (same simplification as the rush check),
+  // tunneling through its other planets
+  const attVia = attHeld.map(p => ({ p, release: 0 }));
+  let D = Infinity;
+  for (const src of attHeld) D = Math.min(D, routeTime(src, defHome, attVia, obstaclesAll, 0));
+  const defVia = paintedVia(defHeld, obstaclesAll);
+  let def = defHomeShips;
+  for (const p of defHeld) {
+    // A painted planet only produces once it's actually captured, and only
+    // what it produces AND can fly back home (tunneling through the
+    // defender's own planets) before the attack lands counts. That capture
+    // lag is exactly why a fresh expansion leaves you exposed. Home: 0 and 0.
+    const captureAt = p === defHome ? 0 : routeTime(defHome, p, defVia, obstaclesAll, 0);
+    const back = p === defHome ? 0 : routeTime(p, defHome, defVia, obstaclesAll, 0);
+    def += (p.prod || 0) * SHIPS_PER_PROD_PER_SEC * Math.max(0, D - captureAt - back);
+  }
+  return { def, D };
+}
+
+// ── Versus Timer (croissant, #expansion-maths) ────────────────────────────
+// "When one player's production lead will eliminate their ship deficit."
+// Two-sided: each side's ships over time =
+//   home ships - sum(cost of picks) + sum_p prod_p/50 * max(0, t - c_p)
+// over ALL its planets -- home included (c = 0) -- where c_p is when pick
+// p is actually captured (real capture simulation from home at t=0).
+function sideTimeline(homeP, picks, obstaclesAll) {
+  const events = [{ prod: homeP.prod || 0, c: 0 }];
+  const captureAt = { [homeP.n]: 0 };   // when each planet becomes yours (tunnel release)
+  let cost = 0;
+  if (picks.length) {
+    const { myPlanetsAfter } = simulateComboCapture(picks, [homeP], obstaclesAll);
+    const at = {};
+    for (const p of myPlanetsAfter) at[p.n] = p.capturedAt != null ? p.capturedAt : p.busyUntil;
+    for (const q of picks) {
+      cost += q.cost;
+      if (isFinite(at[q.n])) { events.push({ prod: q.prod || 0, c: at[q.n] }); captureAt[q.n] = at[q.n]; }
+    }
+  }
+  return { ships0: (homeP.ships || 0) - cost, events, cost, captureAt, home: homeP,
+           prodTotal: (homeP.prod || 0) + picks.reduce((s, q) => s + (q.prod || 0), 0) };
+}
+
+// earliest t' >= t at which timeline tl holds `need` ships
+function timeWhen(tl, t, need) {
+  let sNow = shipsAt(tl, t);
+  if (sNow >= need) return t;
+  let slope = 0;
+  const later = [];
+  for (const e of tl.events) { if (e.c <= t) slope += e.prod * SHIPS_PER_PROD_PER_SEC; else later.push(e); }
+  later.sort((a, b) => a.c - b.c);
+  for (const e of later) {
+    if (slope > 0) { const hit = t + (need - sNow) / slope; if (hit <= e.c) return hit; }
+    sNow += slope * (e.c - t); t = e.c; slope += e.prod * SHIPS_PER_PROD_PER_SEC;
+  }
+  return slope > 0 ? t + (need - sNow) / slope : Infinity;
+}
+
+// Take `seq` in order on top of timeline `base` (held = base's planets):
+// each launches as soon as the side has cost+1 ships (never before the
+// previous launch), from whichever owned planet gets there first,
+// tunneling through its own planets. Late captures produce late.
+// ── percentage sends ────────────────────────────────────────────────────
+// Galcon 2 sends a PERCENTAGE of a planet's ships, in 5% steps, rounded
+// up (measured: 5%-steps + ceil explains 94% of 627 clean sends across the
+// replay corpus, allowing for fractional ship counts). So a capture can't
+// send exactly cost+1: the overpay lands on the new planet and is still
+// yours -- and players use it on purpose, sending a big stack to the first
+// planet and relaunching the rest onward (90% and 100% are the two most
+// common sends in the first 3s of real games).
+const PCT_STEP = 5;
+function pctSent(pct, F) {
+  return pct >= 100 ? Math.floor(F + 1e-9) : Math.ceil(pct / 100 * F - 1e-9);
+}
+// smallest 5% step that sends at least `want` from these ship counts
+function pctFor(want, Fs) {
+  for (let pct = PCT_STEP; pct <= 100; pct += PCT_STEP) {
+    let sum = 0;
+    for (const F of Fs) sum += pctSent(pct, F);
+    if (sum >= want) return pct;
+  }
+  return 100;
+}
+// per-planet ship ledger: ships on n at time t (t >= entry time)
+function ledgerShips(e, t) { return e.s + e.prod * SHIPS_PER_PROD_PER_SEC * Math.max(0, t - e.t); }
+// earliest t' >= t at which planet entry e holds `need` ships
+function ledgerWhen(e, t, need) {
+  const t1 = Math.max(t, e.t), have = ledgerShips(e, t1);
+  if (have >= need) return t1;
+  return e.prod > 0 ? t1 + (need - have) / (e.prod * SHIPS_PER_PROD_PER_SEC) : Infinity;
+}
+
+// Take `seq` in order on top of timeline `base` (held = base's planets),
+// with REAL percentage sends from REAL planets:
+//   - each planet's ships are tracked separately (ledger);
+//   - each capture launches from the source (or pair of sources, multi-
+//     select at one %) that gets cost+1 there first, tunneling through own
+//     planets;
+//   - "carry": a pick that's the nearest owned planet to later picks gets
+//     sent enough to relaunch them too, so the stack moves forward;
+//   - the % is the smallest 5% step covering that amount (rounded up), and
+//     the overpay sits on the new planet.
+// The aggregate timeline (ships0/events) stays exact -- ships are only
+// moved, never lost -- so scoring and rush checks keep working; what
+// changes is WHEN each capture can launch. Returns the recipe too.
+function orderedTimeline(base, held, seq, t0, obstaclesAll) {
+  const tl = { ...base, events: base.events.slice(), captureAt: { ...base.captureAt } };
+  const ledger = { ...(base.ledger || { [base.home.n]: { s: base.ships0, t: 0, prod: base.prodTotal || 0 } }) };
+  let t = t0, firstLaunch = null, lastCapture = 0;
+  const h = held.slice();
+  const recipe = [];
+
+  // carry plan: parent of each pick = nearest (in flight time) planet that
+  // is held or earlier in seq; demand = its cost+1 plus its children's
+  const parent = seq.map((q, j) => {
+    let best = null, bt = Infinity;
+    for (const c of [...h, ...seq.slice(0, j)]) {
+      const lt = legTime(c, q, obstaclesAll);
+      if (lt < bt) { bt = lt; best = c; }
+    }
+    return best;
+  });
+  const demand = seq.map(q => q.cost + 1);
+  for (let j = seq.length - 1; j >= 0; j--) {
+    const pj = parent[j];
+    const i = seq.indexOf(pj);
+    if (i >= 0) demand[i] += demand[j];
+  }
+
+  const carriedBy = {};   // pick index -> planet that was sent its ships
+  for (let j = 0; j < seq.length; j++) {
+    const q = seq[j];
+    const need = q.cost + 1;
+    const via = h.map(p => ({ p, release: tl.captureAt[p.n] != null ? tl.captureAt[p.n] : Infinity }));
+    const owned = h.filter(p => ledger[p.n]);
+    let best = null;
+    // ships were already sent ahead for this pick: relaunch the stack from
+    // there (same flight as tunneling through it, one less slider change)
+    const cb = carriedBy[j];
+    if (cb && ledger[cb.n]) {
+      const ts = ledgerWhen(ledger[cb.n], t, need);
+      if (isFinite(ts)) best = { srcs: [cb], ts, arrive: routeTime(cb, q, via, obstaclesAll, ts), carried: true };
+    }
+    // single source
+    for (const src of owned) {
+      const ts = ledgerWhen(ledger[src.n], t, need);
+      if (!isFinite(ts)) continue;
+      const arr = routeTime(src, q, via, obstaclesAll, ts);
+      // a carried stack wins ties (within 0.1s)
+      if (!best || arr < best.arrive - (best.carried ? 0.1 : 0)) best = { srcs: [src], ts, arrive: arr };
+    }
+    // two sources, one % (multi-select) -- only when it's sooner
+    for (let a = 0; a < owned.length; a++)
+      for (let b = a + 1; b < owned.length; b++) {
+        const ea = ledger[owned[a].n], eb = ledger[owned[b].n];
+        let ts = Math.max(t, ea.t, eb.t);
+        const have = ledgerShips(ea, ts) + ledgerShips(eb, ts);
+        if (have < need) {
+          const rate = (ea.prod + eb.prod) * SHIPS_PER_PROD_PER_SEC;
+          if (rate <= 0) continue;
+          ts += (need - have) / rate;
+        }
+        if (best && ts >= best.arrive - (best.carried ? 0.1 : 0)) continue;
+        const arr = Math.max(routeTime(owned[a], q, via, obstaclesAll, ts), routeTime(owned[b], q, via, obstaclesAll, ts));
+        if (!best || arr < best.arrive - (best.carried ? 0.1 : 1e-6)) best = { srcs: [owned[a], owned[b]], ts, arrive: arr };
+      }
+    if (!best || !isFinite(best.arrive)) return null;
+
+    // how much to send: this capture, plus what it should carry forward,
+    // capped by what the sources hold; rounded up to a 5% step
+    const Fs = best.srcs.map(p => ledgerShips(ledger[p.n], best.ts));
+    const avail = Fs.reduce((x, y) => x + y, 0);
+    // carry only for children that really are faster to relaunch from q
+    // than to send from where the ships are now
+    let carry = 0;
+    for (let k = j + 1; k < seq.length; k++) {
+      if (parent[k] !== q) continue;
+      const viaQ = best.arrive + legTime(q, seq[k], obstaclesAll);
+      // (alt already tunnels through q once it's captured -- sending
+      // straight from home "through" q is the same flight, no carry needed)
+      const viaWithQ = via.concat([{ p: q, release: best.arrive }]);
+      let alt = Infinity;
+      for (const src of owned) alt = Math.min(alt, routeTime(src, seq[k], viaWithQ, obstaclesAll, best.ts));
+      // carry when relaunching from q is at least as fast (ties included:
+      // that's the "send the stack, then 100% onward" line players use)
+      if (viaQ <= alt + 0.05) { carry += demand[k]; carriedBy[k] = q; }
+    }
+    const want = Math.max(need, Math.min(need + carry, Math.floor(avail + 1e-9)));
+    let pct = pctFor(want, Fs);
+    if (best.carried && !Object.keys(carriedBy).some(k => +k > j && carriedBy[k] === best.srcs[0]) && carry === 0)
+      pct = 100;   // last stop for this stack: send everything on it
+    let sent = 0;
+    best.srcs.forEach((p, i) => {
+      const k = Math.min(pctSent(pct, Fs[i]), Math.floor(Fs[i] + 1e-9));
+      sent += k;
+      ledger[p.n] = { s: Fs[i] - k, t: best.ts, prod: ledger[p.n].prod };
+    });
+    if (sent < need) return null;
+    ledger[q.n] = { s: sent - q.cost, t: best.arrive, prod: q.prod || 0 };
+
+    if (firstLaunch == null || best.ts < firstLaunch) firstLaunch = best.ts;
+    tl.ships0 -= q.cost;
+    tl.cost = (tl.cost || 0) + q.cost;
+    tl.prodTotal = (tl.prodTotal || 0) + (q.prod || 0);
+    tl.events.push({ prod: q.prod || 0, c: best.arrive });
+    tl.captureAt[q.n] = best.arrive;
+    lastCapture = Math.max(lastCapture, best.arrive);
+    recipe.push({ target: q.n, from: best.srcs.map(p => p.n), pct, sent, launch: best.ts, arrive: best.arrive,
+                  over: sent - need });
+    h.push(q);
+  }
+  tl.ledger = ledger;
+  tl.recipe = [...(base.recipe || []), ...recipe];
+  return { tl, held: h, firstLaunch, lastCapture, recipe };
+}
+
+// A side's timeline with its picks taken IN THE GIVEN ORDER from t=0
+// (painted planets keep the order they were assigned in). Same shape as
+// sideTimeline; falls back to it if some pick can't be reached.
+function sideTimelineOrdered(homeP, picks, obstaclesAll) {
+  const base = { ships0: homeP.ships || 0, events: [{ prod: homeP.prod || 0, c: 0 }], captureAt: { [homeP.n]: 0 },
+                 cost: 0, home: homeP, prodTotal: homeP.prod || 0,
+                 ledger: { [homeP.n]: { s: homeP.ships || 0, t: 0, prod: homeP.prod || 0 } }, recipe: [] };
+  if (!picks.length) return base;
+  const o = orderedTimeline(base, [homeP], picks, 0, obstaclesAll);
+  return o ? o.tl : sideTimeline(homeP, picks, obstaclesAll);
+}
+
+// Their all-in rush launched at tau. Simplification (Phil): once they hold a
+// forward planet, their whole fleet is assumed to already be sitting on it
+// -- no tracking of where ships actually start. So the rush launches from
+// whichever planet they've captured by tau is fastest to your cluster
+// (home always counts), still tunneling through their other owned planets.
+// Returns flight time to the nearest planet of `targets`.
+function rushTimeFrom(tl, enemyHeld, targets, obstaclesAll, tau) {
+  return rushTargetFrom(tl, enemyHeld, targets, obstaclesAll, tau).t;
+}
+// Same, but also says WHICH of your planets that fastest rush hits.
+function rushTargetFrom(tl, enemyHeld, targets, obstaclesAll, tau) {
+  const owned = enemyHeld.filter(p => tl.captureAt[p.n] != null && tl.captureAt[p.n] <= tau);
+  const via = owned.map(p => ({ p, release: 0 }));
+  let best = Infinity, hit = null;
+  for (const src of owned)
+    for (const q of targets) {
+      const t = routeTime(src, q, via, obstaclesAll, 0);
+      if (t < best) { best = t; hit = q; }
+    }
+  return { t: best, q: hit };
+}
+
+// First t >= t0 at which `me` has caught up with `them` in ships
+// (t0 if already level or ahead; Infinity if the gap never closes).
+function versusFrom(me, them, t0) { return evenForGood(me, them, t0); }
+
+// Phil's "trade" case: their rush wins at your front planet q, but that
+// may be ALL it wins. The fight costs both sides the same D ships (the
+// defense you got there), so the ship gap is unchanged -- only q's
+// production flips from you to them at landing time T. You survive the
+// trade iff, after it:
+//   1. you still out-produce them, so you still even up (at V2), and
+//   2. their follow-up -- everything they have, sitting on q (forward-
+//      planet simplification) -- can't take another of your planets or
+//      your home before you even, and
+//   3. you can take q back (your all-in vs their defense on it).
+// myHeld / theirHeld include homes. Returns null if the trade can't be
+// modeled (no target), else the verdict with its numbers.
+function tradeAnalysis(me, them, myHeld, theirHeld, rush, eff, obstaclesAll) {
+  const q = rush.q;
+  if (!q || rush.tau == null) return null;
+  const T = rush.tau + rush.R, D = rush.defense;
+  const lossAt = Math.max(T, me.captureAt[q.n] != null ? me.captureAt[q.n] : T);
+  const me2 = { ...me, ships0: me.ships0 - D, events: [...me.events, { prod: -(q.prod || 0), c: lossAt }],
+                captureAt: { ...me.captureAt } };
+  delete me2.captureAt[q.n];
+  const them2 = { ...them, ships0: them.ships0 - D, events: [...them.events, { prod: q.prod || 0, c: T }],
+                  captureAt: { ...them.captureAt, [q.n]: T } };
+  const myProd2 = me.prodTotal - (q.prod || 0);
+  const theirProd2 = them.prodTotal + (q.prod || 0);
+  const V2 = versusFrom(me2, them2, T);
+
+  const myRest = myHeld.filter(p => p.n !== q.n);
+  const theirHeld2 = [...theirHeld, q];
+  const end = Math.min(isFinite(V2) ? V2 : Infinity, T + RUSH_HORIZON);
+  const breaks = t0 => {
+    const s = new Set([t0]);
+    for (const e of [...me2.events, ...them2.events]) if (e.c > t0 && e.c <= end) s.add(e.c);
+    return [...s].sort((a, b) => a - b);
+  };
+
+  // 2. their follow-up push, launched any time before you even
+  let push = { margin: -Infinity, tau: null, q: null, R: Infinity, theirs: 0, defense: 0 };
+  for (const tau of breaks(T)) {
+    const { t: R, q: hit } = rushTargetFrom(them2, theirHeld2, myRest, obstaclesAll, tau);
+    if (!isFinite(R)) continue;
+    const theirs = shipsAt(them2, tau), defense = eff * shipsAt(me2, tau + R);
+    if (theirs - defense > push.margin) push = { margin: theirs - defense, tau, q: hit, R, theirs, defense };
+  }
+
+  // 3. your retake of q: first launch (from T, or once you've evened) that wins
+  let retakeAt = Infinity;
+  const tries = breaks(T); if (isFinite(V2)) tries.push(V2);
+  for (const tau of tries.sort((a, b) => a - b)) {
+    const R = rushTimeFrom(me2, myRest, [q], obstaclesAll, tau);
+    if (!isFinite(R)) continue;
+    if (shipsAt(me2, tau) - eff * shipsAt(them2, tau + R) > 0) { retakeAt = tau + R; break; }
+  }
+
+  const outprod = myProd2 > theirProd2;
+  const survives = isFinite(V2) && push.margin <= 0 && isFinite(retakeAt);
+  return { q, T, D, V2, myProd2, theirProd2, outprod, push, retakeAt, survives,
+           me2, them2, myRest, theirHeld2 };
+}
+
+// After winning the trade (they hold q from T), can they ALSO expand --
+// "rush the 12, then take the 8" -- and keep all of it? A follow-up set Y
+// is theirs to keep iff your counter-rush (all-in, any launch from T until
+// you'd even up, or the 60s window) can't win at q, at anything in Y, or
+// at their other planets. That also rules out you simply taking q back.
+// Picks in Y are taken in cost order, each launched as soon as they have
+// cost+1 ships (whole fleet on their forward planets), from whichever of
+// their planets is fastest.
+function followUpCheck(tr, Y, eff, obstaclesAll) {
+  const K = SHIPS_PER_PROD_PER_SEC;
+  let th = tr.them2, held = tr.theirHeld2, t = tr.T;
+  const caps = [];
+  for (const y of [...Y].sort((a, b) => a.cost - b.cost)) {
+    const need = y.cost + 1;
+    let s = shipsAt(th, t);
+    if (s < need) {
+      const slope = th.events.reduce((a, e) => a + (e.c <= t ? e.prod * K : 0), 0);
+      if (slope <= 0) return null;
+      t += (need - s) / slope;
+    }
+    const R = rushTimeFrom(th, held, [y], obstaclesAll, t);
+    if (!isFinite(R)) return null;
+    const c = t + R;
+    th = { ...th, ships0: th.ships0 - y.cost, events: [...th.events, { prod: y.prod || 0, c }],
+           captureAt: { ...th.captureAt, [y.n]: c }, prodTotal: th.prodTotal + (y.prod || 0) };
+    held = [...held, y];
+    caps.push({ y, c });
+  }
+  const me2 = tr.me2;
+  const targets = held;   // home included: a home kill is a win too
+  const V3 = versusFrom(me2, th, tr.T);
+  const end = tr.T + RUSH_HORIZON;
+  const taus = new Set([tr.T]);
+  for (const e of [...me2.events, ...th.events]) if (e.c > tr.T && e.c <= end) taus.add(e.c);
+  if (isFinite(V3)) taus.add(V3);
+  let counter = { margin: -Infinity };
+  for (const tau of taus) {
+    const { t: R, q: hit } = rushTargetFrom(me2, tr.myRest, targets, obstaclesAll, tau);
+    if (!isFinite(R)) continue;
+    const mine = shipsAt(me2, tau), defense = eff * shipsAt(th, tau + R);
+    if (mine - defense > counter.margin) counter = { margin: mine - defense, tau, hit, R, mine, defense };
+  }
+  const prodThem = tr.theirProd2 + Y.reduce((a, y) => a + (y.prod || 0), 0);
+  return { Y, caps, keeps: counter.margin <= 0, counter, V3, prodThem, lastCap: caps.length ? caps[caps.length - 1].c : tr.T,
+           cost: Y.reduce((a, y) => a + y.cost, 0) };
+}
+
+// All the follow-ups they could keep: every single remaining neutral, then
+// pairs of the kept singles. firstOnly stops at the first one found (used
+// inside the combo search, where only "is there one" matters).
+function followUpLines(tr, pool, eff, obstaclesAll, firstOnly = false) {
+  const cands = pool.filter(p => p.n !== tr.q.n)
+                    .sort((a, b) => (b.prod / Math.max(b.cost, 1)) - (a.prod / Math.max(a.cost, 1)));
+  const out = [];
+  for (const y of cands) {
+    const r = followUpCheck(tr, [y], eff, obstaclesAll);
+    if (r && r.keeps) { out.push(r); if (firstOnly) return out; }
+  }
+  const singles = [...out].sort((a, b) => b.prodThem - a.prodThem).slice(0, 6);
+  for (let i = 0; i < singles.length; i++)
+    for (let j = i + 1; j < singles.length; j++) {
+      const r = followUpCheck(tr, [singles[i].Y[0], singles[j].Y[0]], eff, obstaclesAll);
+      if (r && r.keeps) out.push(r);
+    }
+  return out.sort((a, b) => b.prodThem - a.prodThem || a.cost - b.cost);
+}
+
+// First t >= 0 at which `me` has caught up with `them` in ships. 0 if
+// `me` isn't behind; Infinity if the gap never closes.
+// Versus timer: the time from which `me` is level or ahead in ships FOR
+// GOOD (every later moment too). 0 if never behind; Infinity if the gap
+// never closes for good. A brief crossing doesn't count -- e.g. a cheap
+// near planet can put you level for a second before the other side's
+// bigger, later-captured production takes over permanently.
+function evenForGood(me, them, t0 = 0) {
+  const K = SHIPS_PER_PROD_PER_SEC;
+  let diff = shipsAt(me, t0) - shipsAt(them, t0);
+  let slope = 0;
+  const pts = [];
+  for (const e of me.events) { if (e.c <= t0) slope += e.prod * K; else pts.push({ c: e.c, d: e.prod * K }); }
+  for (const e of them.events) { if (e.c <= t0) slope -= e.prod * K; else pts.push({ c: e.c, d: -e.prod * K }); }
+  pts.sort((a, b) => a.c - b.c);
+  let t = t0;
+  let T = diff >= 0 ? t0 : null;          // start of the current level-or-ahead run
+  const segment = (end) => {               // advance t -> end at the current slope
+    const d1 = diff + slope * (end - t);
+    if (diff >= 0 && d1 < 0) T = null;                                 // fell behind
+    else if (diff < 0 && d1 >= 0) T = t + (-diff) / slope;             // caught up
+    diff = d1; t = end;
+  };
+  for (const p of pts) { segment(p.c); slope += p.d; }
+  // final, open-ended stretch
+  if (slope < -1e-12) return Infinity;
+  if (Math.abs(slope) <= 1e-12) return diff >= 0 ? (T == null ? t : T) : Infinity;
+  if (diff >= 0) return T == null ? t : T;
+  return t + (-diff) / slope;
+}
+function versusTimerAt(me, them) { return evenForGood(me, them, 0); }
+
+function shipsAt(tl, t) {
+  let s = tl.ships0;
+  for (const e of tl.events) if (t > e.c) s += e.prod * SHIPS_PER_PROD_PER_SEC * (t - e.c);
+  return s;
+}
+
+// Can their rush actually land a win on your cluster? Swap model (A >= PD+1,
+// defender wins ties): they launch all-in at some time tau with their ships
+// THEN; it lands R seconds later against your ships at THAT point -- you keep
+// producing through the flight, they don't. Checked at t=0 and at every
+// moment either side's production changes, within the expansion horizon.
+// margin >= 1 -> the rush wins. A 1-ship deficit is nothing against the
+// ships you produce during their flight; a 55-ship hole with their fleet 6s
+// out is fatal.
+const RUSH_HORIZON = 60;   // seconds of opening considered
+// eff = share of your fleet that actually reaches the planet being hit in
+// time (you see the rush and pull home + other planets onto it; ~90% makes
+// it). defense = eff * your total ships at landing.
+// R: flight time -- a number, or a function of launch time tau (tunneling
+// makes the rush faster once their forward planets are captured).
+function rushMarginAt(me, them, R, eff = 1) {
+  const Rf = typeof R === "function" ? R : () => R;
+  const none = { margin: -Infinity, tau: null, theirAtLaunch: 0, mineAtArrival: Infinity, defense: Infinity, R: Infinity };
+  if (typeof R !== "function" && !isFinite(R)) return none;
+  const taus = new Set([0]);
+  for (const e of [...me.events, ...them.events]) if (isFinite(e.c) && e.c <= RUSH_HORIZON) taus.add(e.c);
+  let best = none;
+  for (const tau of taus) {
+    const r = Rf(tau);
+    if (!isFinite(r)) continue;
+    const theirs = shipsAt(them, tau), mine = shipsAt(me, tau + r), defense = eff * mine;
+    if (theirs - defense > best.margin)
+      best = { margin: theirs - defense, tau, theirAtLaunch: theirs, mineAtArrival: mine, defense, R: r };
+  }
+  return best;
+}
+
+// Swap-model kill check (forced regime A >= PD+1; defender wins ties):
+// attacker sends every ship it has left; it kills iff it lands with
+// strictly more than the defender can have there by then.
+function killStatus(attShips, attHeld, defHeld, defShips, obstaclesAll) {
+  const { def, D } = defenseAtArrival(defHeld, defShips, attHeld, obstaclesAll);
+  const margin = attShips - def;          // kill iff margin >= 1
+  return { canKill: margin >= 1, margin, def, D, attShips, defShips };
+}
+
+function reachableNow(candidates, held, eheld, params, enemyThreat = true) {
+  // params.spendable: ships this side can send away and still not be
+  // killable (and, if it has a kill on the enemy, still keep that kill).
+  // Derived from the swap-model kill check in computeSandbox -- see
+  // killStatus(). Replaces the old "budget minus reserve slider" rule:
+  // the reserve is a t=0 spending heuristic, not a threat threshold.
+  //
+  // enemyThreat: can the enemy contest/snipe anything at all? False when
+  // they have < SNIPE_SHIPS ships, or when YOU can kill them (they're
+  // pinned: any ship they send away makes the kill easier). When false,
+  // geometry (dm/de) stops mattering.
+  //
+  // ownInHole: spendable < 0 while the enemy is armed -- the enemy can
+  // already kill you. No waiting on production to fund anything: any
+  // wait just hands them time. Defend first.
+  // holdsKill: this side can kill the other right now. Waiting on
+  // production to fund a pick hands the defender that same time to build
+  // defense, eroding the kill -- so no unlock path. Only instant picks
+  // within `spendable` (which already keeps margin >= 1) survive.
+  const { safety, reach, spendable, contestTol, maxPayoff, homeShare, maxWait, holdsKill } = params;
+  const ownSpendable = spendable;
+  const ownInHole = ownSpendable < 0 && enemyThreat;
+  const heldIds = new Set(held.map(p => p.n));
+  const eheldIds = new Set(eheld.map(p => p.n));
+  const out = {};
+  for (const q of candidates) {
+    if (heldIds.has(q.n) || eheldIds.has(q.n)) continue;
+    const dm = held.length ? Math.min(...held.map(h => dist(q, h))) : Infinity;
+    const de = eheld.length ? Math.min(...eheld.map(h => dist(q, h))) : Infinity;
+    let ratio, contested, safe;
+    if (!isFinite(de) || !enemyThreat) { ratio = 0; contested = false; safe = true; }
+    else if (de === 0) { ratio = 0; contested = false; safe = dm <= 0; }
+    else { ratio = dm / de; contested = Math.abs(ratio - 1.0) <= contestTol; safe = dm <= safety * de; }
+    const inReach = dm <= reach;
+    const payoff = q.prod > 0 ? (25.0 * q.cost / q.prod) : Infinity;
+    const afford = (q.cost + 1) <= ownSpendable;
+    const worth = payoff <= maxPayoff;
+    // afford instantly, OR some held planet can fund it via production
+    // within maxWait (Structural rings' unlocker heuristic). Unlock is
+    // blocked when you're in the hole against an armed enemy. When the
+    // enemy is armed, it also has to beat their fleet there: your wait
+    // plus your flight must land before their nearest fleet could arrive
+    // (straight-line at BASELINE_SPEED -- a race approximation).
+    let waitTime = null, affordEventually = afford, unlockBlocked = null;
+    if (!afford && held.length > 1 && homeShare != null && maxWait != null) {
+      const w = bestUnlockWait(q, held, homeShare);
+      if (w > maxWait) unlockBlocked = "wait";
+      else if (ownInHole) unlockBlocked = "hole";
+      else if (holdsKill) unlockBlocked = "kill";
+      else if (enemyThreat && w + dm / BASELINE_SPEED >= de / BASELINE_SPEED) unlockBlocked = "race";
+      else { affordEventually = true; waitTime = w; }
+    }
+    const eligible = safe && inReach && affordEventually && worth && !contested;
+    out[q.n] = { dm, de, ratio, contested, safe, inReach, afford, affordEventually, waitTime, unlockBlocked,
+                 worth, payoff, eligible, enemyThreat, ownInHole, spendable: ownSpendable };
+  }
+  return out;
+}
+
+function computePunish(candidates, heldP1, heldP2, sw, sh, params, enemyThreat = true) {
+  const eheldBaseline = heldP1.map(h => ({ n: h.n, x: sw - h.x, y: sh - h.y }));
+  // baseline keeps the assumed symmetric-optimal opponent ARMED -- a
+  // hypothetical mirror opponent hasn't actually blown their ships on a
+  // mistake. Only LIVE uses the real threat state.
+  const baseline = reachableNow(candidates, heldP1, eheldBaseline, params, true);
+  const live = reachableNow(candidates, heldP1, heldP2, params, enemyThreat);
+  const punish = {};
+  for (const n in live) {
+    if (live[n].eligible && !(baseline[n] && baseline[n].eligible)) punish[n] = live[n];
+  }
+  return { punish, baseline, live };
+}
+
+function simulateComboCapture(combo, heldP1, obstaclesAll) {
+  // Real capture timing for JUST this combo -- direct sends first, then
+  // production-funded chains -- the same math vacPredictSequenceParallel
+  // uses for the whole map, scoped down to one candidate cluster. Returns
+  // the completion time of the LAST capture (the "total cluster payoff
+  // time"): how long you're actually tied up landing this whole combo.
+  let myPlanets = heldP1.map(p => ({ n: p.n, x: p.x, y: p.y, prod: p.prod || 0,
+                                      ships: p.ships || 0, busyUntil: p.busyUntil || 0,
+                                      capturedAt: p.capturedAt || 0 }));
+  let remaining = combo.slice();
+  let maxT = 0;
+
+  while (remaining.length) {
+    const wave = planDirectWave(myPlanets, remaining, obstaclesAll);   // tunnel-aware
+    if (wave.length) {
+      for (const m of wave) {
+        maxT = Math.max(maxT, m.t);
+        myPlanets.push({ n: m.q.n, x: m.q.x, y: m.q.y, prod: m.q.prod, ships: 0, busyUntil: m.t, capturedAt: m.t });
+      }
+      const capturedN = new Set(wave.map(m => m.q.n));
+      remaining = remaining.filter(r => !capturedN.has(r.n));
+      continue;
+    }
+    let best = null;
+    for (const q of remaining) {
+      const [t, contribs] = vacTimeToCapture(q, myPlanets, obstaclesAll);
+      if (best === null || t < best.t) best = { t, q, contribs };
+    }
+    if (best === null || !isFinite(best.t)) return { clusterTime: Infinity, myPlanetsAfter: myPlanets };
+    for (const idx of best.contribs) {
+      myPlanets[idx].ships = 0;
+      myPlanets[idx].busyUntil = Math.max(myPlanets[idx].busyUntil || 0, best.t);
+    }
+    maxT = Math.max(maxT, best.t);
+    myPlanets.push({ n: best.q.n, x: best.q.x, y: best.q.y, prod: best.q.prod, ships: 0, busyUntil: best.t, capturedAt: best.t });
+    remaining = remaining.filter(r => r.n !== best.q.n);
+  }
+  return { clusterTime: maxT, myPlanetsAfter: myPlanets };
+}
+
+function expansionTimer(combo, myPlanetsAfter) {
+  // Expansion Timer (croissant, #expansion-maths, 2026): the real-time
+  // point at which cumulative production earned from `combo` -- each
+  // planet counted from its OWN real capture-completion time, taken
+  // from simulateComboCapture()'s myPlanetsAfter -- offsets the total
+  // ships spent capturing them. "When it hits 0, it should theoretically
+  // be impossible for that player to be successfully rushed by someone
+  // only owning their home": this is the economic break-even point, NOT
+  // how long you're tied up consolidating (that's clusterTime) and NOT
+  // a two-sided ships/production race (that was the wrong turn last
+  // time -- reverted).
+  const byN = {};
+  for (const p of myPlanetsAfter) byN[p.n] = p;
+  const events = combo
+    .map(q => ({ t: byN[q.n] ? byN[q.n].busyUntil : Infinity, prod: q.prod, cost: q.cost }))
+    .filter(e => isFinite(e.t))
+    .sort((a, b) => a.t - b.t);
+  const totalCost = events.reduce((s, e) => s + e.cost, 0);
+  if (!events.length || totalCost <= 0) return 0;
+
+  let remaining = totalCost, rate = 0, prevT = 0;
+  for (const e of events) {
+    const dt = e.t - prevT;
+    if (rate > 0) {
+      const produced = rate * dt / 50.0;
+      if (produced >= remaining) return prevT + remaining * 50.0 / rate;
+      remaining -= produced;
+    }
+    rate += e.prod;
+    prevT = e.t;
+  }
+  if (rate > 0) return prevT + remaining * 50.0 / rate;
+  return Infinity;   // no production at all in the combo -- never pays off
+}
+
+function rankCombos(candidatesByN, punish, heldP1, eheldLive, params, obstaclesAll, maxComboSize = 3, topK = 5, branchWidth = 3, enemyThreat = true, evalCombo) {
+  // The cluster gate (evalCombo, from computeSandbox) runs INSIDE the
+  // search: a combo is only recorded -- and only extended further -- if it
+  // passes. Checking afterwards on a production-sorted list let big failing
+  // combos crowd out every small passing one (the "none" while red rings
+  // showed). Pruning at failures is a heuristic -- a failing set could in
+  // principle become passing with one more cheap high-prod planet -- but it
+  // keeps the search to combos that are safe at every step of building them.
+  const density = n => { const q = candidatesByN[n]; return q.prod / Math.max(q.cost, 1); };
+  const MAX_EVAL = 1500;   // distinct sets checked (each runs a capture sim)
+  const verdicts = new Map();   // sorted-key -> gate result
+  const kept = new Map();       // sorted-key -> [combo, score, ev]
+  let evaluated = 0, capped = false;
+
+  function judge(combo) {
+    const sortedCombo = [...combo].sort((a, b) => a - b);
+    const key = sortedCombo.join(",");
+    if (verdicts.has(key)) return verdicts.get(key);
+    if (evaluated >= MAX_EVAL) { capped = true; return null; }
+    evaluated++;
+    const ev = evalCombo(sortedCombo.map(n => candidatesByN[n]));
+    verdicts.set(key, ev);
+    if (ev.keep) kept.set(key, [sortedCombo, sortedCombo.reduce((s, n) => s + candidatesByN[n].prod, 0), ev]);
+    return ev;
+  }
+
+  function expand(chosen, workingHeld, remaining, depth) {
+    if (depth >= maxComboSize || !remaining.length) return;
+    // feasibility only (reach/geometry, ships you actually have); the gate
+    // decides safety. Ship budget comes from the gate's real capture sim.
+    const still = reachableNow(remaining.map(n => candidatesByN[n]), workingHeld, eheldLive, params, enemyThreat);
+    const eligibleNow = remaining.filter(n => still[n] && still[n].eligible);
+    eligibleNow.sort((a, b) => density(b) - density(a));
+    for (const n of eligibleNow.slice(0, branchWidth)) {
+      const next = [...chosen, n];
+      const ev = judge(next);
+      if (!ev || !ev.keep) continue;
+      expand(next, [...workingHeld, candidatesByN[n]], remaining.filter(m => m !== n), depth + 1);
+    }
+  }
+  expand([], heldP1, Object.keys(punish).map(Number), 0);
+
+  const sorted = [...kept.values()].sort((a, b) => b[1] - a[1]);
+  const out = sorted.slice(0, topK).map(([combo, score, ev]) => ({
+    combo, score, versus: ev.versus, rushTime: ev.rushTime, prodTotal: ev.prodTotal, cost: ev.cost,
+    exposed: ev.exposed, improves: !!ev.improves, before: ev.before, beforeMargin: ev.beforeMargin,
+    margin: ev.margin, theirAtLaunch: ev.theirAtLaunch, mineAtArrival: ev.mineAtArrival,
+    defense: ev.defense, eff: ev.eff, enemyArmed: ev.enemyArmed, pinned: ev.pinned, status: ev.status, trade: ev.trade,
+    affordable: ev.affordable, lastCapture: ev.lastCapture }));
+  out.totalFound = kept.size;            // every safe combo the search reached
+  out.evaluated = evaluated;             // distinct sets checked
+  out.rejected = evaluated - kept.size;  // checked and failed
+  out.capped = capped;
+  return out;
+}
+
+// ── parse a .jsonl replay, splitting out every game found ──────────────────
+// BATCH_*.jsonl files (from a /batch recording session) hold many games
+// concatenated -- one per poll cycle -- with no separator beyond the next
+// header itself. A boundary is a new "type":"init" line (current export) or
+// a new payload.chunk===0 line (older raw mod1.lua g2.data shape). Mirrors
+// map_layers.py's split_games() exactly, including the two format shapes.
+function splitGames(text) {
+  const games = [];
+  let curHeader = null;
+
+  function flush() {
+    if (curHeader) games.push(curHeader);
+  }
+
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch (e) { continue; }
+
+    if (obj.type === "init" || obj.type === "chunk") {
+      if (obj.type === "init" && obj.map) {
+        flush();
+        curHeader = obj;
+      }
+      // "chunk" lines carry no map data map-structure.html needs -- only
+      // the header is used here (unlike map_layers.py, which also needs events).
+      continue;
+    }
+
+    // legacy raw payload format, no "type" field
+    const p = obj.payload || {};
+    if (p.chunk === 0 && p.map) {
+      flush();
+      curHeader = p;
+    }
+  }
+  flush();
+  return games;
+}
+
+// ── the model, ported 1:1 from map_structure.py analyze() ──────────────────
+function analyze(header, params) {
+  const { reserve, safety, maxWait, homeShare, contestTol, reachFrac, maxPayoff } = params;
+  const maxOrder = 6;
+  const sw = header.w || 520, sh = header.h || 360;
+  const p1n = header.player_n, p2n = header.enemy_n;
+  const planets = header.map;
+
+  const home  = planets.find(p => p.owner === p1n);
+  const ehome = planets.find(p => p.owner === p2n);
+  if (!home || !ehome) throw new Error("could not find both home planets in header map");
+
+  const neutrals = planets
+    .filter(p => p.owner !== p1n && p.owner !== p2n)
+    .map(p => ({ ...p, cost: p.ships }));
+
+  for (const q of neutrals) {
+    q.d_home  = dist(q, home);
+    q.d_ehome = dist(q, ehome);
+    q.payoff  = q.prod > 0 ? (25.0 * q.cost / q.prod) : Infinity;
+  }
+
+  // Every neutral is a candidate, not just the ones geometrically nearer
+  // your home than the enemy's -- see map_structure.py's analyze() for the
+  // full reasoning. A planet that starts out on "the enemy's side" can
+  // still become genuinely reachable once a forward capture extends your
+  // real reach past the raw home-to-home midline; the order>=2 safety
+  // check below already re-evaluates against the CURRENT held set, not
+  // just home, so there was never a reason to exclude it upfront.
+  const candidates = neutrals;
+  const dHH = dist(home, ehome);
+  const reach = reachFrac * dHH;
+
+  const order = {};           // n -> order int
+  const unlockers = {};       // n -> [[fromN|"home", waitSec], ...]
+  const contested = new Set();
+  const neverReason = {};
+
+  function dNearest(q, holdings) {
+    let m = Infinity;
+    for (const h of holdings) m = Math.min(m, dist(q, h));
+    return m;
+  }
+  const byN = {};
+  for (const q of candidates) byN[q.n] = q;
+
+  // order 1
+  let held = [home], eheld = [ehome];
+  for (const q of candidates) {
+    const dm = dNearest(q, held), de = dNearest(q, eheld);
+    const ratio = de > 0 ? dm / de : 0;
+    if (Math.abs(ratio - 1.0) <= contestTol) { contested.add(q.n); continue; }
+    const safe = dm <= safety * de;
+    const inReach = dm <= reach;
+    const afford = q.cost + 1 <= home.ships - reserve;
+    const worth = q.payoff <= maxPayoff;
+    if (safe && inReach && afford && worth) {
+      order[q.n] = 1;
+      unlockers[q.n] = [["home", 0.0]];
+    }
+  }
+
+  // orders 2..maxOrder
+  let k = 2;
+  while (k <= maxOrder) {
+    const prev = candidates.filter(q => (order[q.n] ?? 99) < k);
+    if (prev.length === 0) break;
+    held = [home, ...prev];
+    eheld = [ehome, ...prev.map(q => mirrorOf(q, sw, sh))];
+    let added = false;
+    for (const q of candidates) {
+      if (order[q.n] !== undefined || contested.has(q.n) || q.payoff > maxPayoff) continue;
+      const dm = dNearest(q, held), de = dNearest(q, eheld);
+      if (!(dm <= safety * de)) continue;
+      for (const P of prev) {
+        const dP = dist(q, P);
+        if (dP > safety * de || dP > reach) continue;
+        const supply = (P.prod + home.prod * homeShare) * SHIPS_PER_PROD_PER_SEC;
+        const wait = supply > 0 ? (q.cost + 1) / supply : Infinity;
+        if (wait <= maxWait) {
+          if (!unlockers[q.n]) unlockers[q.n] = [];
+          unlockers[q.n].push([P.n, wait]);
+        }
+      }
+      if (unlockers[q.n] && unlockers[q.n].length) { order[q.n] = k; added = true; }
+    }
+    if (!added) break;
+    k += 1;
+  }
+
+  for (const q of candidates) {
+    const n = q.n;
+    if (order[n] !== undefined || contested.has(n)) continue;
+    const dm = q.d_home, de = q.d_ehome;
+    if (q.payoff > maxPayoff) {
+      neverReason[n] = `not worth it (payoff ${q.payoff.toFixed(0)}s > ${maxPayoff}s)`;
+    } else if (q.cost + 1 > home.ships - reserve && dm <= reach && dm <= safety * de) {
+      neverReason[n] = `unaffordable from home (cost ${q.cost} > budget ${(home.ships - reserve).toFixed(0)})`;
+    } else if (dm > safety * de) {
+      neverReason[n] = `enemy too close (d_me/d_enemy=${(dm / de).toFixed(2)} > ${safety})`;
+    } else {
+      neverReason[n] = "out of reach of every held planet";
+    }
+  }
+
+  const counts = {};
+  for (const n in order) counts[order[n]] = (counts[order[n]] || 0) + 1;
+  const depth = Object.keys(order).length ? Math.max(...Object.values(order)) : 0;
+  let archetype;
+  if (Object.keys(order).length === 0) archetype = "rush-only";
+  else if (depth === 1) archetype = "first-order";
+  else if (depth === 2) archetype = "second-order";
+  else archetype = "third-order+";
+
+  const unlockCount = {};
+  for (const n in unlockers) for (const [un] of unlockers[n]) if (un !== "home") unlockCount[un] = (unlockCount[un] || 0) + 1;
+
+  return { sw, sh, home, ehome, candidates, byN, order, unlockers, contested, neverReason, counts, depth, archetype, unlockCount, reach, dHH };
+}
+
+// Apollonius circle: locus of points P where d(P,A)/d(P,B) = k (k != 1).
+// center = (A - k^2 B) / (1 - k^2),  radius = k * |AB| / |1 - k^2|
+function apolloniusCircle(A, B, k) {
+  if (Math.abs(k - 1) < 1e-6) return null; // degenerates to the perpendicular bisector line
+  const k2 = k * k;
+  const cx = (A.x - k2 * B.x) / (1 - k2);
+  const cy = (A.y - k2 * B.y) / (1 - k2);
+  const ab = dist(A, B);
+  const r = k * ab / Math.abs(1 - k2);
+  return { x: cx, y: cy, r };
+}
+
+// ── rendering ────────────────────────────────────────────────────────────
+function planetRadius(prod) { return (prod * 12 / 5 + 168) / 17; }
+
+// ── planet labels (driven by the "Planet labels" checkboxes) ─────────────
+const labelOpts = { prod: true, cost: true, payoff: false, id: false };
+
+function planetLabelLines(q) {
+  const on = [labelOpts.id, labelOpts.cost, labelOpts.prod, labelOpts.payoff].filter(Boolean).length;
+  const tag = (prefix, v) => (on > 1 ? prefix + v : String(v));   // prefix only when stacked
+  const lines = [];
+  if (labelOpts.id) lines.push(`n${q.n}`);
+  if (labelOpts.cost) lines.push(tag("c", q.cost));
+  if (labelOpts.prod) lines.push(tag("p", q.prod));
+  if (labelOpts.payoff) {
+    const R = q.prod > 0 ? 50 * q.cost / q.prod : Infinity;   // neutral payoff time R
+    lines.push(isFinite(R) ? `${R.toFixed(0)}s` : "∞");
+  }
+  return lines;
+}
+
+// Stacks the enabled label lines. firstBaseline = y of the first line.
+// On dark (neutral slate) planets: light text with a soft dark halo, so
+// lines that spill past a small planet's edge stay readable. On light fills
+// (owned / colored order planets): plain dark text -- a halo there just
+// looks muddy.
+const NEUTRAL_FILL = "#3a4560";
+function appendLabelLines(g, el, q, firstBaseline, fontSize = 7.5, onLight = false) {
+  const lh = fontSize + 1.2;
+  planetLabelLines(q).forEach((txt, i) => {
+    const attrs = { x: q.x, y: firstBaseline + i * lh, "text-anchor": "middle", "font-size": fontSize };
+    if (onLight) attrs.fill = "#0a0e17";
+    else Object.assign(attrs, { fill: "#eef2f9", stroke: "#0a0e17", "stroke-width": 1.4, "stroke-opacity": 0.75,
+                                "stroke-linejoin": "round", "paint-order": "stroke" });
+    const t = el("text", attrs);
+    t.textContent = txt;
+    g.appendChild(t);
+  });
+}
+
+// Vertically centered stack (Sandbox, which has no second label).
+function appendCenteredLabels(g, el, q, fontSize = 7.5, onLight = false) {
+  const n = planetLabelLines(q).length;
+  const lh = fontSize + 1.2;
+  appendLabelLines(g, el, q, q.y + fontSize * 0.35 - (n - 1) * lh / 2, fontSize, onLight);
+}
+
+// Homes keep their "H"; ID/prod go underneath, outside the circle.
+function appendHomeLabel(svg, el, h) {
+  const parts = [];
+  if (labelOpts.id) parts.push(`n${h.n}`);
+  if (labelOpts.prod) parts.push(`p${h.prod}`);
+  if (!parts.length) return;
+  const t = el("text", { x: h.x, y: h.y + 26, "text-anchor": "middle", "font-size": 8, fill: "#8b95ad" });
+  t.textContent = parts.join("  ");
+  svg.appendChild(t);
+}
+
+function render(r) {
+  const svg = document.getElementById("map");
+  const W = r.sw, H = r.sh;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.width = Math.min(900, W * 1.7) + "px";
+  svg.innerHTML = "";
+  svg.style.display = "block";
+  document.getElementById("empty").style.display = "none";
+
+  const ns = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  // background
+  svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, fill: "#070b13" }));
+
+  // Apollonius safety circle around home (order-1 safety boundary), + dim mirror around enemy home
+  const circ = apolloniusCircle(r.home, r.ehome, window.__lastParams.safety);
+  if (circ) {
+    svg.appendChild(el("circle", {
+      cx: circ.x, cy: circ.y, r: circ.r, fill: "none", stroke: "#e2a85a", "stroke-opacity": 0.35,
+      "stroke-width": 1.2, "stroke-dasharray": "5,5",
+    }));
+  }
+  // reach circle around home (max launch distance)
+  svg.appendChild(el("circle", {
+    cx: r.home.x, cy: r.home.y, r: r.reach, fill: "none", stroke: "#5b6884", "stroke-opacity": 0.4,
+    "stroke-width": 1, "stroke-dasharray": "2,4",
+  }));
+
+  // unlock arrows
+  for (const nStr in r.unlockers) {
+    const n = Number(nStr);
+    const q = r.byN[n];
+    if (!q) continue;
+    for (const [un] of r.unlockers[nStr]) {
+      const src = un === "home" ? r.home : r.byN[un];
+      if (!src) continue;
+      svg.appendChild(el("line", {
+        x1: src.x, y1: src.y, x2: q.x, y2: q.y, stroke: "#4a5a7c", "stroke-width": 1, "stroke-opacity": 0.55,
+      }));
+    }
+  }
+
+  // No separate dim "mirror" layer anymore: every neutral (both sides of
+  // the raw midline) now gets its own real order/contested/never color
+  // directly at its own position, so a mirror overlay would just double
+  // cover each planet with a stale grey copy of its partner's status.
+
+  // every neutral, colored by its own real order/contested/never status
+  for (const q of r.candidates) {
+    const n = q.n;
+    let fill, label;
+    if (r.order[n] !== undefined) {
+      const o = Math.min(5, r.order[n]);
+      fill = ORDER_HEX[o]; label = String(r.order[n]);
+    } else if (r.contested.has(n)) {
+      fill = "#e0596b"; label = "×";
+    } else {
+      fill = "#3a4560"; label = "–";
+    }
+    const rad = planetRadius(q.prod);
+    const g = el("g", {});
+    g.appendChild(el("circle", { cx: q.x, cy: q.y, r: rad, fill, "fill-opacity": 0.92 }));
+    const t1 = el("text", { x: q.x, y: q.y - 3, "text-anchor": "middle", "font-size": 8.5, fill: "#0a0e17" });
+    t1.textContent = label;
+    g.appendChild(t1);
+    appendLabelLines(g, el, q, q.y + 7, 7.5, fill !== NEUTRAL_FILL);
+    svg.appendChild(g);
+  }
+
+  // homes
+  for (const [h, color, label] of [[r.home, "#ffce6b", "H"], [r.ehome, "#ff7a7a", "H"]]) {
+    svg.appendChild(el("circle", { cx: h.x, cy: h.y, r: 15, fill: color }));
+    const t = el("text", { x: h.x, y: h.y + 4, "text-anchor": "middle", "font-size": 10, fill: "#0a0e17", "font-weight": 700 });
+    t.textContent = label;
+    svg.appendChild(t);
+    appendHomeLabel(svg, el, h);
+  }
+}
+
+// ── sidebar / report ─────────────────────────────────────────────────────
+function updateSidebar(r) {
+  document.getElementById("summaryBlock").style.display = "block";
+  document.getElementById("archBadge").textContent = r.archetype;
+  document.getElementById("archDepth").textContent = `depth ${r.depth}`;
+  document.getElementById("statO1").textContent = r.counts[1] || 0;
+  document.getElementById("statO2").textContent = r.counts[2] || 0;
+  const o3plus = Object.entries(r.counts).filter(([k]) => Number(k) >= 3).reduce((a, [, v]) => a + v, 0);
+  document.getElementById("statO3").textContent = o3plus;
+  document.getElementById("statContested").textContent = r.contested.size;
+  document.getElementById("statNever").textContent = Object.keys(r.neverReason).length;
+
+  const groups = document.getElementById("groups");
+  groups.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "grouplist";
+
+  function section(title, colorVar, rows) {
+    if (!rows.length) return;
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${colorVar}"></span>${title}`;
+    wrap.appendChild(h);
+    for (const row of rows) wrap.appendChild(row);
+  }
+
+  function planetRow(q, viaText) {
+    const div = document.createElement("div");
+    div.className = "planet-row";
+    div.innerHTML = `<span><span class="n">n${q.n}</span> p${q.prod} c${q.cost}</span><span class="via">${viaText}</span>`;
+    return div;
+  }
+
+  const maxOrderSeen = Object.values(r.order).reduce((a, b) => Math.max(a, b), 0);
+  for (let o = 1; o <= maxOrderSeen; o++) {
+    const rows = r.candidates
+      .filter(q => r.order[q.n] === o)
+      .sort((a, b) => a.d_home - b.d_home)
+      .map(q => {
+        let via;
+        if (o === 1) via = `unlocks ${r.unlockCount[q.n] || 0}`;
+        else via = (r.unlockers[q.n] || []).map(([un, w]) => `n${un} ~${w.toFixed(0)}s`).join(", ");
+        return planetRow(q, via);
+      });
+    section(`Order ${o}`, ORDER_HEX[Math.min(5, o)], rows);
+  }
+
+  const contestedRows = r.candidates
+    .filter(q => r.contested.has(q.n))
+    .sort((a, b) => a.d_home - b.d_home)
+    .map(q => planetRow(q, `d${q.d_home.toFixed(0)}/${q.d_ehome.toFixed(0)}`));
+  section("Contested", "#e0596b", contestedRows);
+
+  const neverRows = r.candidates
+    .filter(q => r.neverReason[q.n])
+    .sort((a, b) => a.d_home - b.d_home)
+    .map(q => {
+      const div = document.createElement("div");
+      div.className = "planet-row";
+      div.innerHTML = `<span><span class="n">n${q.n}</span> p${q.prod} c${q.cost}</span>`;
+      const small = document.createElement("div");
+      small.style.cssText = "font-size:10px;color:#5b6884;margin:-2px 0 4px;";
+      small.textContent = r.neverReason[q.n];
+      const container = document.createElement("div");
+      container.appendChild(div);
+      container.appendChild(small);
+      return container;
+    });
+  if (neverRows.length) {
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:#3a4560"></span>Never (this model)`;
+    wrap.appendChild(h);
+    for (const row of neverRows) wrap.appendChild(row);
+  }
+
+  groups.appendChild(wrap);
+}
+
+// ── timeline mode: render + sidebar ─────────────────────────────────────
+function waveColor(wave, maxWave) {
+  // Same amber->magenta spectrum as ORDER_HEX, but continuous across
+  // however many waves this map actually produced, not capped at 5.
+  const stops = ["#e2a85a", "#6fd3b8", "#7fa8f0", "#a888e6", "#e07fc0"];
+  if (maxWave <= 1) return stops[0];
+  const frac = (wave - 1) / (maxWave - 1);
+  const idx = frac * (stops.length - 1);
+  return stops[Math.min(stops.length - 1, Math.round(idx))];
+}
+
+function renderTimeline(r) {
+  const svg = document.getElementById("map");
+  const W = r.sw, H = r.sh;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.width = Math.min(900, W * 1.7) + "px";
+  svg.innerHTML = "";
+  svg.style.display = "block";
+  document.getElementById("empty").style.display = "none";
+
+  const ns = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, fill: "#070b13" }));
+
+  // Draw the capture ORDER as a connected path (home -> 1st -> 2nd -> ...),
+  // since that's the thing this mode is actually showing -- a single
+  // predicted timeline, not a dependency graph with multiple unlockers.
+  let prevPt = r.home;
+  for (const e of r.timeline) {
+    const q = r.byN[e.n];
+    if (!q) continue;
+    svg.appendChild(el("line", {
+      x1: prevPt.x, y1: prevPt.y, x2: q.x, y2: q.y,
+      stroke: e.mode === "direct" ? "#5b6884" : "#4a5a7c",
+      "stroke-width": e.mode === "direct" ? 1 : 1.4,
+      "stroke-dasharray": e.mode === "circle" ? "3,3" : "none",
+      "stroke-opacity": 0.5,
+    }));
+    prevPt = q;
+  }
+
+  for (const q of r.candidates) {
+    const n = q.n;
+    const wave = r.waveOf[n];
+    let fill, label;
+    if (wave !== undefined) {
+      fill = waveColor(wave, r.maxWave);
+      label = String(wave);
+    } else {
+      fill = "#3a4560"; label = "–";  // never reached within this timeline
+    }
+    const rad = planetRadius(q.prod);
+    const g = el("g", {});
+    g.appendChild(el("circle", { cx: q.x, cy: q.y, r: rad, fill, "fill-opacity": 0.92 }));
+    const t1 = el("text", { x: q.x, y: q.y - 3, "text-anchor": "middle", "font-size": 8, fill: "#0a0e17" });
+    t1.textContent = wave !== undefined ? `${r.timeOf[n].toFixed(1)}s` : "–";
+    g.appendChild(t1);
+    appendLabelLines(g, el, q, q.y + 7, 7.5, fill !== NEUTRAL_FILL);
+    svg.appendChild(g);
+  }
+
+  for (const [h, color, label] of [[r.home, "#ffce6b", "H"], [r.ehome, "#ff7a7a", "H"]]) {
+    svg.appendChild(el("circle", { cx: h.x, cy: h.y, r: 15, fill: color }));
+    const t = el("text", { x: h.x, y: h.y + 4, "text-anchor": "middle", "font-size": 10, fill: "#0a0e17", "font-weight": 700 });
+    t.textContent = label;
+    svg.appendChild(t);
+    appendHomeLabel(svg, el, h);
+  }
+}
+
+function updateSidebarTimeline(r) {
+  document.getElementById("summaryBlock").style.display = "block";
+  document.getElementById("archBadge").textContent = `${r.timeline.length} captures`;
+  document.getElementById("archDepth").textContent = `${r.maxWave} waves, ${r.totalTime.toFixed(1)}s total`;
+  document.getElementById("statO1").textContent = r.timeline.filter(e => e.mode === "direct").length;
+  document.getElementById("statO2").textContent = r.timeline.filter(e => e.mode === "circle").length;
+  document.getElementById("statO3").textContent = "–";
+  document.getElementById("statContested").textContent = "–";
+  document.getElementById("statNever").textContent = r.candidates.length - r.timeline.length;
+  // relabel the summary rows for this mode without touching the HTML structure
+  document.querySelectorAll("#summaryBlock .stat-row span")[0].textContent = "Direct sends";
+  document.querySelectorAll("#summaryBlock .stat-row span")[1].textContent = "Circle captures";
+  document.querySelectorAll("#summaryBlock .stat-row span")[2].textContent = "(unused)";
+  document.querySelectorAll("#summaryBlock .stat-row span")[3].textContent = "(unused)";
+  document.querySelectorAll("#summaryBlock .stat-row span")[4].textContent = "Never reached";
+
+  const groups = document.getElementById("groups");
+  groups.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.className = "grouplist";
+
+  function planetRow(q, viaText) {
+    const div = document.createElement("div");
+    div.className = "planet-row";
+    div.innerHTML = `<span><span class="n">n${q.n}</span> p${q.prod} c${q.cost}</span><span class="via">${viaText}</span>`;
+    return div;
+  }
+
+  for (let w = 1; w <= r.maxWave; w++) {
+    const entries = r.timeline.filter(e => e.wave === w);
+    if (!entries.length) continue;
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${waveColor(w, r.maxWave)}"></span>Wave ${w}`;
+    wrap.appendChild(h);
+    for (const e of entries.sort((a, b) => a.t - b.t)) {
+      const q = r.byN[e.n];
+      const via = e.mode === "direct" ? `direct, t=${e.t.toFixed(1)}s` : `circle x${e.nContributors}, t=${e.t.toFixed(1)}s`;
+      wrap.appendChild(planetRow(q, via));
+    }
+  }
+
+  const neverN = r.candidates.filter(q => r.waveOf[q.n] === undefined);
+  if (neverN.length) {
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:#3a4560"></span>Never reached (this model)`;
+    wrap.appendChild(h);
+    for (const q of neverN) wrap.appendChild(planetRow(q, "unreachable"));
+  }
+
+  groups.appendChild(wrap);
+}
+
+// ── sandbox mode: manual ownership assignment + live punish_engine.py port ─
+// sandboxOwn: planet n -> "p1" | "p2" | undefined(neutral). Reset whenever
+// a new game/header is selected (see selectGame()).
+let sandboxOwn = {};
+// assignment order per planet: painted picks are taken in this order
+let sandboxStamp = {}, stampSeq = 0;
+function ownSet(n, side) {
+  if (side) { if (sandboxOwn[n] !== side) sandboxStamp[n] = ++stampSeq; sandboxOwn[n] = side; }
+  else { delete sandboxOwn[n]; delete sandboxStamp[n]; }
+}
+// Clicked combo suggestion: { key, side: "p1"|"p2", planets: [n...] }. While
+// set, the map drops every other highlight and rings only these planets.
+// Cleared by clicking it again, the Clear button, or any board change.
+let sandboxFocus = null;
+let whyOpen = false;   // "planets not recommended" list expanded?
+// double-click on a combo suggestion = assign its planets (see comboRow)
+const DBL_MS = 350;
+let lastComboClick = { key: null, t: 0 };
+
+function computeSandbox(header) {
+  const sw = header.w || 520, sh = header.h || 360;
+  const p1n = header.player_n, p2n = header.enemy_n;
+  const home = header.map.find(p => p.owner === p1n);
+  const ehome = header.map.find(p => p.owner === p2n);
+  if (!home || !ehome) throw new Error("could not find both home planets in header map");
+
+  const pool = header.map.filter(p => p.owner !== p1n && p.owner !== p2n).map(p => ({ ...p, cost: p.ships }));
+  const byN = {};
+  for (const q of pool) byN[q.n] = q;
+
+  const byStamp = (a, b) => (sandboxStamp[a.n] || 0) - (sandboxStamp[b.n] || 0);
+  const heldP1 = [home, ...pool.filter(q => sandboxOwn[q.n] === "p1").sort(byStamp)];
+  const heldP2 = [ehome, ...pool.filter(q => sandboxOwn[q.n] === "p2").sort(byStamp)];
+  const remaining = pool.filter(q => !sandboxOwn[q.n]);
+
+  const dHH = dist(home, ehome);
+  const raw = readParams();
+  // Ships already committed to whatever's painted yours/theirs come out
+  // of the affordability budget -- painting the 51 doesn't leave your
+  // FULL home fleet free to also afford every other candidate at once.
+  // (Same depletion principle rankCombos() already applies incrementally
+  // to a hypothetical combo; this applies it to what's actually been
+  // painted before any combo search even starts.)
+  // Net ships lost to a capture = its cost: you send cost+1, cost die, the
+  // +1 garrison is still yours. Matches sideTimeline's ships0.
+  const spentP1 = heldP1.slice(1).reduce((s, q) => s + q.cost, 0);
+  const spentP2 = heldP2.slice(1).reduce((s, q) => s + q.cost, 0);
+  const shipsP1 = Math.max(0, home.ships - spentP1);
+  const shipsP2 = Math.max(0, ehome.ships - spentP2);
+
+  // every planet on the map is a potential obstacle for every leg,
+  // regardless of ownership -- same convention as vacPredictSequenceParallel
+  const obstaclesAll = header.map.map(p => ({ n: p.n, x: p.x, y: p.y, r: planetRadius(p.prod) }));
+
+  // Swap-model kill check, both directions: all-in fleet from one home
+  // vs. the other side's ships + production during the flight.
+  const killP1 = killStatus(shipsP1, heldP1, heldP2, shipsP2, obstaclesAll);   // can YOU kill THEM
+  const killP2 = killStatus(shipsP2, heldP2, heldP1, shipsP1, obstaclesAll);   // can THEY kill YOU
+
+  // A side can contest/snipe only if it has ships AND isn't pinned by the
+  // other side's kill threat (any ship it sends away helps the killer).
+  const p1Threat = shipsP1 >= SNIPE_SHIPS && !killP2.canKill;   // P1 can threaten P2's picks
+  const p2Threat = shipsP2 >= SNIPE_SHIPS && !killP1.canKill;   // P2 can threaten P1's picks
+
+  // Search params: feasibility only -- "spendable" is simply the ships you
+  // have. Whether a pick/combo is SAFE is decided by the cluster gate, not
+  // by this budget, so the search mustn't pre-filter on safety.
+  const paramsP1 = { safety: raw.safety, reach: raw.reachFrac * dHH, spendable: shipsP1,
+                      contestTol: raw.contestTol, maxPayoff: raw.maxPayoff,
+                      homeShare: raw.homeShare, maxWait: raw.maxWait, holdsKill: false };
+  const paramsP2 = { ...paramsP1, spendable: shipsP2 };
+
+  // "for P1" = P1's live reachability against P2's actual holdings, plus
+  // the punish overlay (live-eligible but not baseline/mirror-eligible).
+  // "for P2" mirrors it the other way, roles swapped.
+  const forP1 = computePunish(remaining, heldP1, heldP2, sw, sh, paramsP1, p2Threat);
+  const forP2 = computePunish(remaining, heldP2, heldP1, sw, sh, paramsP2, p1Threat);
+
+  // Combo search pool = every candidate that's LIVE-eligible right now,
+  // not just the "punish" subset (live-eligible but NOT baseline/mirror-
+  // eligible). Punish-only was the wrong pool for "what can they safely
+  // do in response" -- most of a side's ordinary good expansions were
+  // ALREADY baseline-eligible (ordinary symmetric play would've been
+  // fine too) and were getting filtered out entirely, even though
+  // they're obviously still valid responses. The separate "Punish set"
+  // list further down still shows the narrower newly-opened-by-mistake
+  // subset on its own.
+  function liveEligible(live) {
+    const out = {};
+    for (const n in live) if (live[n].eligible) out[n] = live[n];
+    return out;
+  }
+  // Pool = EVERY remaining neutral (forP*.live has an entry for each),
+  // not just the instantly-eligible ones: expand() re-checks eligibility
+  // against the growing held set at every step, so a planet that only
+  // becomes takeable after an earlier pick (reach extends, or its
+  // production unlocks it) can actually enter a combo. Seeding with
+  // instantly-eligible planets only made chaining impossible.
+  // Your rule (#expansion-maths): a cluster is punishable by rush death
+  // when the other side's fastest fleet reaches the cluster's closest
+  // planet BEFORE your Versus Timer runs out -- i.e. while you still
+  // trail them in ships from paying for it. Versus Timer is two-sided:
+  // both sides' full production (homes included), each new planet only
+  // from its real capture time. `enemyTL` is the other side's current
+  // timeline (their home + whatever's painted theirs).
+  const picksP1 = heldP1.slice(1), picksP2 = heldP2.slice(1);
+  const tlP1 = sideTimelineOrdered(home, picksP1, obstaclesAll);
+  const tlP2 = sideTimelineOrdered(ehome, picksP2, obstaclesAll);
+  // enemyShips: the rusher's ships right now. Whether they're free to rush
+  // is decided AFTER this cluster is paid for: if spending on it means you
+  // can no longer kill them at home, they're no longer pinned and can rush.
+  // (Using the pre-combo pin made "safe" suggestions turn exposed once
+  // actually taken.)
+  function clusterEval(homeP, picks, enemyTL, enemyHeld, enemyShips, full = false, meTL = null) {
+    if (!picks.length) return null;
+    const me = meTL || sideTimelineOrdered(homeP, picks, obstaclesAll);
+    const myShipsAfter = Math.max(0, homeP.ships - me.cost);
+    const pinnedByMe = killStatus(myShipsAfter, [homeP, ...picks], enemyHeld, enemyShips, obstaclesAll).canKill;
+    const enemyArmed = enemyShips >= SNIPE_SHIPS && !pinnedByMe;
+    const versus = versusTimerAt(me, enemyTL);
+    const eff = raw.defEff != null ? raw.defEff : 0.9;
+    // rush flight depends on launch time: from their home, tunneling through
+    // whichever of their planets they've captured by then
+    const rushAt = enemyArmed ? (tau => rushTimeFrom(enemyTL, enemyHeld, picks, obstaclesAll, tau)) : Infinity;
+    const rush = rushMarginAt(me, enemyTL, rushAt, eff);
+    // shown flight time: the rush that comes closest to winning
+    const rushTime = rush.tau != null ? rush.R : (enemyArmed ? rushTimeFrom(enemyTL, enemyHeld, picks, obstaclesAll, 0) : Infinity);
+    // exposed = their all-in lands with MORE ships than the share of your
+    // fleet you get onto the target in time (defender wins ties)
+    const exposed = rush.margin > 0;
+    // exposed isn't automatically death: the rush may only trade away the
+    // planet it hits (see tradeAnalysis)
+    let trade = null;
+    if (exposed) {
+      const hit = rushTargetFrom(enemyTL, enemyHeld, picks, obstaclesAll, rush.tau).q;
+      trade = tradeAnalysis(me, enemyTL, [homeP, ...picks], enemyHeld, { ...rush, q: hit }, eff, obstaclesAll);
+      // a trade you "survive" still loses if they can bank it: rush the
+      // front planet, then expand somewhere you can't punish
+      if (trade) trade.survivesAlone = trade.survives;
+      if (trade && trade.survives) {
+        const inCluster = new Set(picks.map(p => p.n));
+        const pool = remaining.filter(p => !inCluster.has(p.n));
+        trade.followUps = followUpLines(trade, pool, eff, obstaclesAll, !full);
+        if (trade.followUps.length) trade.survives = false;
+      }
+    }
+    const allowTrade = raw.allowTrade !== false;
+    const status = !exposed ? "safe" : (allowTrade && trade && trade.survives) ? "trade" : "dies";
+    return { versus, rushTime, rushLaunch: rush.tau, exposed, status, trade, margin: rush.margin, eff,
+             theirAtLaunch: rush.theirAtLaunch, mineAtArrival: rush.mineAtArrival, defense: rush.defense,
+             prodTotal: me.prodTotal, cost: me.cost, affordable: me.cost < homeP.ships, enemyArmed, pinned: pinnedByMe,
+             lastCapture: Math.max(0, ...Object.values(me.captureAt)) };
+  }
+  const myRisk = clusterEval(home, picksP1, tlP2, heldP2, shipsP2, true);
+  const theirRisk = clusterEval(ehome, picksP2, tlP1, heldP1, shipsP1, true);
+
+  // The gate, applied to every ring and every combo:
+  //   - their rush can't win (margin < 1) -> keep;
+  //   - already exposed -> keep ONLY if it lowers your versus timer (high
+  //     enough prod for its cost) AND shrinks their rush margin -- i.e. it
+  //     actually digs you out, rather than lowering the timer a little
+  //     while handing their fleet a closer, weaker target;
+  //   - otherwise it's a rush-death liability -> drop.
+  function makeGate(homeP, picks, enemyTL, enemyHeld, enemyShips, base) {
+    return extra => {
+      const r = clusterEval(homeP, picks.concat(extra), enemyTL, enemyHeld, enemyShips);
+      // Sets costing more than the home fleet are allowed: the capture sim
+      // funds the later picks from production, and the rush check sees the
+      // resulting low-ship window, since the pin is recomputed post-combo.
+      const baseDying = !!(base && base.status === "dies");
+      if (r.status !== "dies") return { keep: true, ...r };
+      if (baseDying && r.versus < base.versus - 1e-6 && r.margin < base.margin - 1e-6)
+        return { keep: true, improves: true, before: base.versus, beforeMargin: base.margin, ...r };
+      return { keep: false, why: baseDying ? "noimprove" : "exposed",
+               before: base ? base.versus : null, beforeMargin: base ? base.margin : null, ...r };
+    };
+  }
+  const gateP1 = makeGate(home, picksP1, tlP2, heldP2, shipsP2, myRisk);
+  const gateP2 = makeGate(ehome, picksP2, tlP1, heldP1, shipsP1, theirRisk);
+
+  // Same gate on the single-planet rings. It REPLACES the plain
+  // affordability check there: a planet gets its ring iff the geometry is
+  // fine (safe, in reach, worth it, not contested) AND the gate keeps it.
+  // Punish set is rebuilt from the result so gold rings follow suit.
+  function applyGate(forX, gate) {
+    for (const n in forX.live) {
+      const v = forX.live[n];
+      const geometryOK = v.safe && v.inReach && v.worth && !v.contested;
+      if (!geometryOK) { v.eligible = false; continue; }
+      const g = gate([byN[n]]);
+      v.eligible = g.keep;
+      v.clusterBlocked = g.keep ? null : g;
+    }
+    forX.punish = {};
+    for (const n in forX.live)
+      if (forX.live[n].eligible && !(forX.baseline[n] && forX.baseline[n].eligible)) forX.punish[n] = forX.live[n];
+  }
+  applyGate(forP1, gateP1);
+  applyGate(forP2, gateP2);
+
+  // ── ordered expansion planner ────────────────────────────────────────
+  const HORIZON = raw.horizon || 60;        // score = ship lead at this time
+  const REACT = raw.react != null ? raw.react : 1.5;   // s to see sends + respond
+  const K = SHIPS_PER_PROD_PER_SEC;
+  const EFF = raw.defEff != null ? raw.defEff : 0.9;
+
+  const leadAt = (a, b) => shipsAt(a, HORIZON) - shipsAt(b, HORIZON);
+
+  // Evaluate one ordered sequence for `me` against `opp`'s timeline.
+  // Returns null if it can't be done or it's a rush-death liability.
+  function evalSeq(me, meTL, meHeld, seq, t0, oppTL, oppHeld, oppShips, baseRisk) {
+    const o = orderedTimeline(meTL, meHeld, seq, t0, obstaclesAll);
+    if (!o) return null;
+    const r = clusterEval(me.home, o.held.slice(1), oppTL, oppHeld, oppShips, false, o.tl);
+    const baseDying = !!(baseRisk && baseRisk.status === "dies");
+    let improves = false;
+    if (r.status === "dies") {
+      if (!(baseDying && r.versus < baseRisk.versus - 1e-6 && r.margin < baseRisk.margin - 1e-6)) return null;
+      improves = true;
+    }
+    return { seq, o, r, improves, lead: leadAt(o.tl, oppTL) };
+  }
+
+  // candidate neutrals: every open planet -- the rush check decides what's
+  // holdable (a forward planet the enemy can't punish is a legit pick, and
+  // often exactly the one that boxes them in)
+  function candidatesFor(side, taken) {
+    return remaining.filter(q => !taken.has(q.n));
+  }
+
+  // "Locked out": the loser has no safe expansion left (every single pick
+  // is a rush-death liability), can't win a rush on the winner's cluster,
+  // can't kill the winner's home, and is out-produced -- so the winner's
+  // lead only grows. winnerRisk = winner's cluster vs the loser's rush.
+  const LOCK_BONUS = 10000;
+  function lockedOut(loser, loserTL, loserHeld, t0, winnerTL, winnerHeld, winnerRisk, knownNoPick = false) {
+    if (!(winnerTL.prodTotal > loserTL.prodTotal)) return false;
+    if (winnerRisk && winnerRisk.status !== "safe") return false;
+    const loserShips = Math.max(0, shipsAt(loserTL, t0)), winnerShips = Math.max(0, shipsAt(winnerTL, t0));
+    if (killStatus(loserShips, loserHeld, winnerHeld, winnerShips, obstaclesAll).canKill) return false;
+    if (knownNoPick) return true;
+    const taken = new Set([...loserHeld, ...winnerHeld].map(p => p.n));
+    for (const q of candidatesFor(loser, taken))
+      if (evalSeq(loser, loserTL, loserHeld, [q], t0, winnerTL, winnerHeld, winnerShips, null)) return false;
+    return true;
+  }
+
+  // Beam over ordered sequences. score(ev) picks what's "best" for the
+  // searching side. Returns best ev per SET (its best order found).
+  function beam(me, meTL, meHeld, t0, opp, oppTL, oppHeld, oppShips, baseRisk, taken, width, depth, score) {
+    const cands = candidatesFor(me, taken);
+    const bestBySet = new Map();
+    let frontier = [[]], evaluated = 0, rejected = 0;
+    for (let d = 0; d < depth && frontier.length; d++) {
+      const next = [];
+      for (const seq of frontier)
+        for (const q of cands) {
+          if (seq.includes(q)) continue;
+          const s2 = [...seq, q];
+          evaluated++;
+          const ev = evalSeq(me, meTL, meHeld, s2, t0, oppTL, oppHeld, oppShips, baseRisk);
+          if (!ev) { rejected++; continue; }
+          ev.score = score(ev);
+          const key = s2.map(p => p.n).sort((a, b) => a - b).join(",");
+          const prev = bestBySet.get(key);
+          if (!prev || ev.score > prev.score) bestBySet.set(key, ev);
+          next.push(ev);
+        }
+      next.sort((a, b) => b.score - a.score);
+      frontier = next.slice(0, width).map(ev => ev.seq);
+    }
+    const out = [...bestBySet.values()].sort((a, b) => b.score - a.score);
+    out.evaluated = evaluated; out.rejected = rejected;
+    return out;
+  }
+
+  function permutations(a) {
+    if (a.length <= 1) return [a];
+    const out = [];
+    a.forEach((x, i) => { for (const r of permutations(a.filter((_, j) => j !== i))) out.push([x, ...r]); });
+    return out;
+  }
+
+  // The other side's best safe reply to `mover` having played ev.
+  // Their launches start once they can see the first send + react.
+  function bestReply(mover, ev, opp) {
+    const tReact = (ev.o.firstLaunch || 0) + REACT;
+    const moverShips = Math.max(0, shipsAt(ev.o.tl, tReact));
+    const taken = new Set(ev.o.held.map(p => p.n));
+    const replies = beam(opp, opp.tl, opp.held, tReact, mover, ev.o.tl, ev.o.held, moverShips, opp.risk,
+                         taken, 4, 3, r => -leadAt(ev.o.tl, r.o.tl));
+    // doing nothing: does the opening already box them in?
+    const noneLocked = !replies.length &&
+      lockedOut(opp, opp.tl, opp.held, tReact, ev.o.tl, ev.o.held, ev.r, true);
+    let best = { seq: [], lead: leadAt(ev.o.tl, opp.tl), o: null, locksMover: false, moverLocks: noneLocked };
+    best.value = -best.lead - (noneLocked ? LOCK_BONUS : 0);
+    const options = [best];
+    // their replies: highest lead for them, and a big bonus for any reply
+    // that leaves YOU with no safe move (checked on their best few)
+    replies.slice(0, 12).forEach((r, i) => {
+      const lead = leadAt(ev.o.tl, r.o.tl);
+      const locks = i < 8 && lockedOut(mover, ev.o.tl, ev.o.held, (r.o.firstLaunch || 0) + REACT, r.o.tl, r.o.held, r.r);
+      const value = -lead + (locks ? LOCK_BONUS : 0);
+      const opt = { seq: r.seq, lead, o: r.o, r: r.r, locksMover: locks, moverLocks: false, value };
+      options.push(opt);
+      if (value > best.value) best = opt;
+    });
+    // the mirror reply: copy the opening on their side of the map (same
+    // costs, mirrored positions) -- always a candidate, greedy or not
+    const mirror = [];
+    for (const p of ev.seq) {
+      const m = mirrorOf(p, sw, sh);
+      let bestQ = null, bestD = Infinity;
+      for (const q of remaining) {
+        if (taken.has(q.n) || mirror.includes(q)) continue;
+        const d = Math.hypot(q.x - m.x, q.y - m.y) + 4 * Math.abs(q.cost - p.cost);
+        if (d < bestD) { bestD = d; bestQ = q; }
+      }
+      if (bestQ) mirror.push(bestQ);
+    }
+    const mKey = mirror.map(q => q.n).sort((a, b) => a - b).join(",");
+    if (mirror.length && !options.some(o => o.seq.map(q => q.n).sort((a, b) => a - b).join(",") === mKey)) {
+      const mr = evalSeq(opp, opp.tl, opp.held, mirror, tReact, ev.o.tl, ev.o.held, moverShips, opp.risk);
+      if (mr) {
+        const lead = leadAt(ev.o.tl, mr.o.tl);
+        const locks = lockedOut(mover, ev.o.tl, ev.o.held, (mr.o.firstLaunch || 0) + REACT, mr.o.tl, mr.o.held, mr.r);
+        const opt = { seq: mirror, lead, o: mr.o, r: mr.r, locksMover: locks, moverLocks: false, mirror: true,
+                      value: -lead + (locks ? LOCK_BONUS : 0) };
+        options.push(opt);
+        if (opt.value > best.value) best = opt;
+      }
+    }
+    // their best few replies, kept so the 3rd ply can pick the one that
+    // holds up against YOUR counter (e.g. a mirror expansion instead of a
+    // greedy grab that lets you lock them out)
+    const mOpt = options.find(o => o.mirror);
+    best.options = options.sort((a, b) => b.value - a.value).slice(0, 8);
+    if (mOpt && !best.options.includes(mOpt)) best.options.push(mOpt);
+    return best;
+  }
+
+  // Your counter to their reply (3rd ply): more picks for the mover,
+  // launched once the reply's first send is visible.
+  function bestCounter(mover, ev, opp, reply) {
+    if (!reply.o) return null;
+    const tC = (reply.o.firstLaunch || 0) + REACT;
+    const oppShips = Math.max(0, shipsAt(reply.o.tl, tC));
+    const taken = new Set([...ev.o.held.map(p => p.n), ...reply.o.held.map(p => p.n)]);
+    const moverNow = { ...mover, held: ev.o.held };
+    const counters = beam(moverNow, ev.o.tl, ev.o.held, tC, opp, reply.o.tl, reply.o.held, oppShips, ev.r,
+                          taken, 3, 2, c => leadAt(c.o.tl, reply.o.tl));
+    // your counter can box THEM in too
+    let best = null;
+    counters.slice(0, 6).forEach((c, i) => {
+      const locks = i < 4 && lockedOut(opp, reply.o.tl, reply.o.held, (c.o.firstLaunch || 0) + REACT, c.o.tl, c.o.held, c.r);
+      const value = c.score + (locks ? LOCK_BONUS : 0);
+      if (!best || value > best.value) best = { seq: c.seq, lead: c.score, locks, value };
+    });
+    if (!best || best.value <= reply.lead) return null;
+    return best;
+  }
+
+  function planSearch(me, opp) {
+    const oppShips = Math.max(0, shipsAt(opp.tl, 0));
+    // 1-ply: safe ordered sequences, scored with no reply
+    const first = beam(me, me.tl, me.held, 0, opp, opp.tl, opp.held, oppShips, me.risk,
+                       new Set([...me.held, ...opp.held].map(p => p.n)), 12, 4, ev => ev.lead);
+    // best order for the leading sets
+    const top = first.slice(0, 20).map(ev => {
+      let best = ev;
+      if (ev.seq.length > 1)
+        for (const perm of permutations(ev.seq)) {
+          const e2 = evalSeq(me, me.tl, me.held, perm, 0, opp.tl, opp.held, oppShips, me.risk);
+          if (e2 && e2.lead > best.lead) best = { ...e2, score: e2.lead };
+        }
+      return best;
+    });
+    // 2-ply: rank by lead after their best reply
+    const valueOf = rp => rp.lead + (rp.moverLocks ? LOCK_BONUS : 0) - (rp.locksMover ? LOCK_BONUS : 0);
+    for (const ev of top) { ev.reply = bestReply(me, ev, opp); ev.score2 = valueOf(ev.reply); }
+    top.sort((a, b) => b.score2 - a.score2);
+    // 3-ply on the top 5: your best counter to that reply
+    // 3-ply minimax: they pick the reply that's best for them AFTER your
+    // best counter, not just the greediest one
+    for (const ev of top.slice(0, 5)) {
+      let pick = null;
+      for (const rp of ev.reply.options || [ev.reply]) {
+        const counter = rp.locksMover || rp.moverLocks ? null : bestCounter(me, ev, opp, rp);
+        const v = counter ? counter.value : valueOf(rp);
+        if (!pick || v < pick.v) pick = { rp, counter, v };
+      }
+      ev.reply = pick.rp;
+      ev.counter = pick.counter;
+      ev.score3 = pick.v;
+    }
+    const head = top.slice(0, 5).sort((a, b) => b.score3 - a.score3);
+    const ranked = [...head, ...top.slice(5)];
+    const out = ranked.map(ev => {
+      const r = ev.r;
+      return { combo: ev.seq.map(p => p.n), order: ev.seq.map(p => p.n), score: ev.score2,
+               lead1: ev.lead, lead2: ev.reply.lead, lead3: ev.counter ? ev.counter.lead : null,
+               rank: ev.score3 != null ? ev.score3 : ev.score2,
+               locksThem: ev.reply.moverLocks || !!(ev.counter && ev.counter.locks), lockedBy: ev.reply.locksMover,
+               reply: ev.reply.seq.map(p => p.n), counter: ev.counter ? ev.counter.seq.map(p => p.n) : null,
+               versus: r.versus, rushTime: r.rushTime, prodTotal: r.prodTotal, cost: ev.o.tl.cost - (me.tl.cost || 0),
+               exposed: r.exposed, improves: ev.improves, margin: r.margin, theirAtLaunch: r.theirAtLaunch,
+               mineAtArrival: r.mineAtArrival, defense: r.defense, eff: r.eff, pinned: r.pinned,
+               status: r.status, trade: r.trade, affordable: ev.o.tl.cost < me.home.ships,
+               lastCapture: ev.o.lastCapture, recipe: ev.o.recipe };
+    });
+    out.totalFound = first.length;
+    out.horizon = HORIZON;
+    out.evaluated = first.evaluated;
+    out.rejected = first.rejected;
+    return out;
+  }
+
+  // Expansion planner (2-ply + 3-ply on the top few): each side's list is
+  // "if this side moves next". Ranked by ship lead at the horizon AFTER
+  // the other side's best safe reply -- so a pick that hands them a
+  // better response ranks below one that doesn't. Orders are searched.
+  const sideP1 = { key: "p1", home, held: heldP1, tl: tlP1, live: forP1.live, risk: myRisk };
+  const sideP2 = { key: "p2", home: ehome, held: heldP2, tl: tlP2, live: forP2.live, risk: theirRisk };
+  const comboP1 = planSearch(sideP1, sideP2);
+  const comboP2 = planSearch(sideP2, sideP1);
+
+  // Transparency for whatever's still NOT eligible: same gating fields
+  // reachableNow() already computes for every remaining candidate --
+  // surfaced here instead of silently dropped, so "why isn't n8 shown"
+  // has a direct answer (reach cap, payoff cap, contested, unaffordable,
+  // or genuinely unsafe) rather than requiring a guess about parameters.
+  function explainIneligible(q, v, side) {
+    if (!v || v.eligible) return null;
+    const A = side === "p1" ? "Player 2" : "Player 1";
+    const reasons = [];
+    const c = v.clusterBlocked;
+    if (c) {
+      const tr = c.trade;
+      const after = !tr ? "" : tr.followUps && tr.followUps.length ? `, ${A} banks it with n${tr.followUps[0].Y[0].n}`
+        : !isFinite(tr.V2) ? `, out-produced after losing n${tr.q.n}`
+        : tr.push.margin > 0 ? `, follow-up takes more`
+        : !isFinite(tr.retakeAt) ? `, can't retake n${tr.q.n}` : "";
+      if (c.why === "exposed") reasons.push(`rushable (${Math.round(c.theirAtLaunch)} vs ${Math.round(c.defense)})${after}`);
+      else if (c.why === "noimprove") reasons.push("doesn't fix rush");
+    }
+    if (v.contested) reasons.push("contested");
+    if (!v.safe) reasons.push(`${A} is closer`);
+    if (!v.inReach) reasons.push("too far");
+    if (!v.worth) reasons.push(`payoff ${v.payoff.toFixed(0)}s (cap ${paramsP1.maxPayoff}s)`);
+    return reasons.length ? reasons.join(" · ") : "excluded";
+  }
+  const whyNotP1 = remaining.map(q => [q, explainIneligible(q, forP1.live[q.n], "p1")]).filter(([, r]) => r);
+  const whyNotP2 = remaining.map(q => [q, explainIneligible(q, forP2.live[q.n], "p2")]).filter(([, r]) => r);
+
+  const chainSetP1 = new Set(comboP1.flatMap(c => c.combo));
+  const chainSetP2 = new Set(comboP2.flatMap(c => c.combo));
+
+  return { sw, sh, home, ehome, pool, byN, heldP1, heldP2, remaining, forP1, forP2, comboP1, comboP2,
+            myRisk, theirRisk, whyNotP1, whyNotP2, chainSetP1, chainSetP2,
+            killP1, killP2, tlP1, tlP2 };
+}
+
+function renderSandbox(s) {
+  const svg = document.getElementById("map");
+  const W = s.sw, H = s.sh;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.style.width = Math.min(900, W * 1.7) + "px";
+  svg.innerHTML = "";
+  svg.style.display = "block";
+  document.getElementById("empty").style.display = "none";
+
+  const ns = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) {
+    const e = document.createElementNS(ns, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, fill: "#070b13" }));
+
+  for (const q of s.pool) {
+    const rad = planetRadius(q.prod);
+    const owner = sandboxOwn[q.n];
+    let fill = "#3a4560";
+    if (owner === "p1") fill = "#ffce6b";
+    else if (owner === "p2") fill = "#ff7a7a";
+
+    let stroke = "none", strokeWidth = 0, dash = null, dim = false;
+    const focusSet = sandboxFocus ? new Set([...sandboxFocus.planets, ...(sandboxFocus.counter || [])]) : null;
+    const replySet = sandboxFocus ? new Set(sandboxFocus.reply || []) : null;
+    if (focusSet) {
+      // focused line: its planets solid in the mover's color, the other
+      // side's best reply dashed in theirs; everything else dims
+      const moverCol = sandboxFocus.side === "p1" ? "#4ade80" : "#ff7a7a";
+      const replyCol = sandboxFocus.side === "p1" ? "#ff7a7a" : "#4ade80";
+      if (focusSet.has(q.n)) { stroke = moverCol; strokeWidth = 3.5; }
+      else if (replySet.has(q.n)) { stroke = replyCol; strokeWidth = 2.5; dash = "4,2"; }
+      else if (!owner) dim = true;
+    } else if (!owner) {
+      const eligP1 = s.forP1.live[q.n] && s.forP1.live[q.n].eligible;
+      const eligP2 = s.forP2.live[q.n] && s.forP2.live[q.n].eligible;
+      const isPunish = !!s.forP1.punish[q.n];
+      // "reachable by chaining": appears in at least one of that side's
+      // ranked combos, even though it isn't instantly takeable
+      const chainP1 = s.chainSetP1.has(q.n), chainP2 = s.chainSetP2.has(q.n);
+      if (isPunish) { stroke = "#ffce6b"; strokeWidth = 2.5; dash = "3,2"; }
+      else if (eligP1) { stroke = "#4ade80"; strokeWidth = 2; }
+      else if (eligP2) { stroke = "#ff7a7a"; strokeWidth = 2; }
+      else if (chainP2 && !chainP1) { stroke = "#ff7a7a"; strokeWidth = 1.2; dash = "2,3"; }
+      else if (chainP1 && !chainP2) { stroke = "#4ade80"; strokeWidth = 1.2; dash = "2,3"; }
+      else if (chainP1 && chainP2) { stroke = "#8b95ad"; strokeWidth = 1.2; dash = "2,3"; }
+    }
+
+    const g = el("g", { style: "cursor:pointer" });
+    const circAttrs = { cx: q.x, cy: q.y, r: rad, fill, "fill-opacity": 0.92 };
+    if (stroke !== "none") { circAttrs.stroke = stroke; circAttrs["stroke-width"] = strokeWidth; if (dash) circAttrs["stroke-dasharray"] = dash; }
+    if (dim) g.setAttribute("opacity", 0.35);
+    g.appendChild(el("circle", circAttrs));
+    appendCenteredLabels(g, el, q, 7.5, fill !== NEUTRAL_FILL);
+    // press and hold 1s -> you / opponent / neutral menu (see attachHold)
+    attachHold(g, q, rad, el);
+    svg.appendChild(g);
+    // order badges for the focused line: 1,2,3 = mover's order, then the
+    // reply's order in the other color, then the counter's
+    if (sandboxFocus) {
+      const tag = (list, color, dy) => {
+        const i = list.indexOf(q.n);
+        if (i < 0) return;
+        const bx = q.x + rad * 0.72, by = q.y - rad * 0.72 + dy;
+        svg.appendChild(el("circle", { cx: bx, cy: by, r: 5.2, fill: color, stroke: "#070b13", "stroke-width": 1 }));
+        const t = el("text", { x: bx, y: by + 2.4, "text-anchor": "middle", "font-size": 6.5, "font-weight": 700, fill: "#0a0e17" });
+        t.textContent = String(i + 1);
+        svg.appendChild(t);
+      };
+      const mc = sandboxFocus.side === "p1" ? "#ffce6b" : "#ff7a7a";
+      const rc = sandboxFocus.side === "p1" ? "#ff7a7a" : "#ffce6b";
+      tag(sandboxFocus.planets, mc, 0);
+      tag(sandboxFocus.reply || [], rc, 0);
+      if (sandboxFocus.counter) {
+        const i = sandboxFocus.counter.indexOf(q.n);
+        if (i >= 0) tag([...sandboxFocus.planets, ...sandboxFocus.counter], mc, 0);
+      }
+    }
+  }
+
+  for (const [h, color, label] of [[s.home, "#ffce6b", "H"], [s.ehome, "#ff7a7a", "H"]]) {
+    svg.appendChild(el("circle", { cx: h.x, cy: h.y, r: 15, fill: color }));
+    const t = el("text", { x: h.x, y: h.y + 4, "text-anchor": "middle", "font-size": 10, fill: "#0a0e17", "font-weight": 700 });
+    t.textContent = label;
+    svg.appendChild(t);
+    appendHomeLabel(svg, el, h);
+  }
+}
+
+// ── Press-and-hold assignment ─────────────────────────────────────────────
+// Hold a planet for HOLD_MS: a ring fills around it; releasing early
+// cancels. When it completes, a three-swatch menu (you / opponent / neutral)
+// opens at the cursor. Picking one assigns the planet. Any board change
+// drops a focused combo (it was computed for the old board).
+const HOLD_MS = 300;
+let holdTimer = null, holdRing = null;
+
+function cancelHold() {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  if (holdRing) { holdRing.remove(); holdRing = null; }
+}
+
+function attachHold(g, q, rad, el) {
+  g.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    cancelHold();
+    closeAssignMenu();
+    const r = rad + 3.5, C = 2 * Math.PI * r;
+    holdRing = el("circle", { cx: q.x, cy: q.y, r, fill: "none", stroke: "#eef2f9", "stroke-width": 2,
+                              "stroke-dasharray": C, "stroke-dashoffset": C, "stroke-linecap": "round",
+                              transform: `rotate(-90 ${q.x} ${q.y})`, "pointer-events": "none" });
+    g.appendChild(holdRing);
+    const ring = holdRing;
+    requestAnimationFrame(() => {
+      ring.style.transition = `stroke-dashoffset ${HOLD_MS}ms linear`;
+      ring.setAttribute("stroke-dashoffset", 0);
+    });
+    const { clientX, clientY } = ev;
+    holdTimer = setTimeout(() => { holdTimer = null; cancelHold(); openAssignMenu(q, clientX, clientY); }, HOLD_MS);
+  });
+  for (const type of ["pointerup", "pointerleave", "pointercancel"]) g.addEventListener(type, cancelHold);
+}
+
+function openAssignMenu(q, x, y) {
+  const menu = document.getElementById("assignMenu");
+  const current = sandboxOwn[q.n] || "";
+  menu.innerHTML = `<div class="am-title">n${q.n} · c${q.cost} · p${q.prod}</div>`;
+  for (const [side, label, color] of [["p1", "Player 1", "var(--home)"], ["p2", "Player 2", "var(--ehome)"], ["", "Neutral", "var(--slate)"]]) {
+    const b = document.createElement("button");
+    b.className = "am-opt" + (side === current ? " am-current" : "");
+    b.innerHTML = `<span class="am-sw" style="background:${color}"></span>${label}`;
+    b.addEventListener("click", () => {
+      ownSet(q.n, side);
+      sandboxFocus = null;
+      closeAssignMenu();
+      refresh();
+    });
+    menu.appendChild(b);
+  }
+  menu.style.display = "block";
+  // keep it on screen
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  menu.style.left = Math.min(x + 8, window.innerWidth - w - 8) + "px";
+  menu.style.top = Math.min(y + 8, window.innerHeight - h - 8) + "px";
+}
+
+function closeAssignMenu() {
+  const menu = document.getElementById("assignMenu");
+  if (menu) menu.style.display = "none";
+}
+document.addEventListener("pointerdown", ev => {
+  const menu = document.getElementById("assignMenu");
+  if (menu && menu.style.display === "block" && !menu.contains(ev.target)) closeAssignMenu();
+}, true);
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeAssignMenu(); });
+
+// Header readout (Sandbox only): each side's total prod (home included) and
+// what it has spent on painted planets, plus the Versus Timer -- whoever is
+// behind in ships, and when their production lead erases the gap.
+function updateHeaderStats(s) {
+  document.getElementById("hdrStats").style.display = "flex";
+  document.getElementById("hsProdMe").textContent = s.tlP1.prodTotal;
+  document.getElementById("hsCostMe").textContent = s.tlP1.cost;
+  document.getElementById("hsProdThem").textContent = s.tlP2.prodTotal;
+  document.getElementById("hsCostThem").textContent = s.tlP2.cost;
+  const vMe = versusTimerAt(s.tlP1, s.tlP2);     // you catching up (you're behind)
+  const vThem = versusTimerAt(s.tlP2, s.tlP1);   // them catching up (they're behind)
+  const el = document.getElementById("hsVersus");
+  const t = v => (isFinite(v) ? v.toFixed(1) + "s" : "never");
+  // whoever is ahead for good, and from when
+  if (vMe === 0 && vThem === 0) { el.textContent = "even"; el.style.color = "var(--text)"; }
+  else if (vMe === 0) { el.textContent = "Player 1 ahead"; el.style.color = "var(--home)"; }
+  else if (vThem === 0) { el.textContent = "Player 2 ahead"; el.style.color = "var(--ehome)"; }
+  else if (vMe <= vThem) { el.textContent = `Player 1 evens in ${t(vMe)}`; el.style.color = "var(--home)"; }
+  else { el.textContent = `Player 2 evens in ${t(vThem)}`; el.style.color = "var(--ehome)"; }
+}
+
+function updateSidebarSandbox(s) {
+  updateHeaderStats(s);
+  document.getElementById("sandboxBlock").style.display = "block";
+  document.getElementById("sbCountMine").textContent = s.heldP1.length - 1;
+  document.getElementById("sbCountTheirs").textContent = s.heldP2.length - 1;
+  document.getElementById("sbCountEligMine").textContent = Object.values(s.forP1.live).filter(v => v.eligible).length;
+  document.getElementById("sbCountEligTheirs").textContent = Object.values(s.forP2.live).filter(v => v.eligible).length;
+  document.getElementById("sbCountPunish").textContent = Object.keys(s.forP1.punish).length;
+  document.getElementById("sbClearFocus").style.display = sandboxFocus ? "block" : "none";
+
+  const PN = side => side === "p1" ? "Player 1" : "Player 2";
+  // click recipe: "15% → n5 · 15% → n9 · n5 100% → n12" (source shown
+  // only when it isn't the home)
+  function recipeHTML(recipe, homeN) {
+    if (!recipe || !recipe.length) return "";
+    return recipe.map(r => {
+      const from = r.from.length === 1 && r.from[0] === homeN ? "" : r.from.map(n => "n" + n).join("+") + " ";
+      const wait = r.launch > 0.05 ? ` <span class="rc-wait">@${r.launch.toFixed(1)}s</span>` : "";
+      return `<span class="rc-send">${from}<b>${r.pct}%</b> → n${r.target}${wait}</span>`;
+    }).join(" ");
+  }
+  const other = side => side === "p1" ? "p2" : "p1";
+  const fs = x => (!isFinite(x) ? "never" : x === 0 ? "0s" : x.toFixed(1) + "s");
+
+  // Short trade summary for combo rows. owner = side whose cluster is hit.
+  function tradeText(tr, owner) {
+    if (!tr) return "";
+    const O = PN(owner), R = PN(other(owner));
+    if (tr.survives) return `${R}'s rush takes n${tr.q.n}, but ${O} survives cleanly`;
+    const fu = tr.followUps && tr.followUps[0];
+    if (fu) return `${R} rushes n${tr.q.n}, then takes ${fu.Y.map(y => "n" + y.n).join(" + ")} and holds the lead`;
+    return `${R}'s rush takes n${tr.q.n} and ${O} doesn't recover`;
+  }
+
+  // One card per player: can the OTHER player rush them?
+  //   Rush check  YES/NO
+  //   ships at arrival (defender vs attacker)
+  //   rush to front of cluster / rush to home / versus timer
+  //   + a bar when the rush wins but only trades a planet:
+  //     amber = survived cleanly, red = survived but the rusher banks it.
+  function rushCard(owner, risk, kill, prod) {
+    const att = other(owner), O = PN(owner), A = PN(att);
+    const card = document.createElement("div");
+    card.className = "rc";
+    const dot = owner === "p1" ? "var(--home)" : "var(--ehome)";
+    card.innerHTML = `<div class="rc-head"><span class="dot" style="background:${dot}"></span>${O}`
+      + `<span class="rc-prod">${prod} prod</span></div>`;
+
+    const clusterWins = !!(risk && risk.exposed);
+    const homeWins = kill.canKill;
+    const yes = clusterWins || homeWins;
+    // which fight to show: the one that wins, else the closest cluster fight, else home
+    let fight;
+    if (clusterWins || (risk && isFinite(risk.rushTime) && !homeWins))
+      fight = `${O} <b>${Math.round(risk.defense)}</b> defending vs ${A} <b>${Math.round(risk.theirAtLaunch)}</b> attacking at arrival`
+        + (risk.eff < 1 ? ` <span style="color:var(--text3)">(${Math.round(risk.eff * 100)}% of ${Math.round(risk.mineAtArrival)})</span>` : "");
+    else if (risk && !isFinite(risk.rushTime) && !homeWins)
+      fight = `${A} can't rush` + (risk.pinned ? ` -- ${O} would kill ${A}'s home` : "");
+    else
+      fight = `${O} <b>${Math.round(kill.def)}</b> at home vs ${A} <b>${Math.round(kill.attShips)}</b> attacking at arrival`;
+
+    const v = `<div class="rc-verdict"><span>Rush check</span><b class="${yes ? "yes" : "no"}">${yes ? "YES" : "NO"}</b></div>`
+      + `<div class="rc-fight">${fight}</div>`;
+
+    const hitTo = risk && risk.trade && risk.trade.q ? `<em>n${risk.trade.q.n}</em>` : "";
+    const front = !risk ? "—" : isFinite(risk.rushTime) ? `${fs(risk.rushTime)}${hitTo}` : "can't rush";
+    const home = `${fs(kill.D)}<em>${homeWins ? `kills (+${Math.round(kill.margin)})` : `no kill (short ${Math.max(1, 1 - Math.round(kill.margin))})`}</em>`;
+    const vs = !risk ? "—" : risk.versus === 0 ? "already even" : fs(risk.versus);
+    const rows = `<div class="rc-rows">`
+      + `<span>Rush to front of cluster</span><b>${front}</b>`
+      + `<span>Rush to home</span><b style="${homeWins ? "color:#ff7a7a" : ""}">${home}</b>`
+      + `<span>Versus timer (payoff)</span><b>${vs}</b></div>`;
+    card.innerHTML += v + rows;
+    const tlX = owner === "p1" ? s.tlP1 : s.tlP2;
+    if (tlX.recipe && tlX.recipe.length)
+      card.innerHTML += `<div class="cr-recipe" style="margin-top:7px;"><span>Sends</span>${recipeHTML(tlX.recipe, owner === "p1" ? s.home.n : s.ehome.n)}</div>`;
+
+    const tr = risk && risk.trade;
+    if (tr && tr.survivesAlone) {
+      const bar = document.createElement("div");
+      const fu = tr.followUps && tr.followUps[0];
+      if (fu) {
+        bar.className = "rc-bar red";
+        bar.innerHTML = `Rush survived, but ${A} can take ${fu.Y.map(y => "n" + y.n).join(" + ")} to regain and hold the lead`
+          + `<small>${A} rushes n${tr.q.n} (${fs(tr.T)}), then expands; ${O}'s best counter-rush ${Math.round(fu.counter.mine)} vs ${Math.round(fu.counter.defense)} fails`
+          + (tr.followUps.length > 1 ? ` · ${tr.followUps.length - 1} other line${tr.followUps.length > 2 ? "s" : ""} listed below` : "") + `</small>`;
+      } else {
+        bar.className = "rc-bar amber";
+        bar.innerHTML = `Rush survived cleanly`
+          + `<small>Loses n${tr.q.n} at ${fs(tr.T)}, still out-produces ${tr.myProd2} vs ${tr.theirProd2}, evens at ${fs(tr.V2)}, retakes n${tr.q.n} by ~${fs(tr.retakeAt)}`
+          + (risk.status === "dies" ? " · not counted as safe (setting off)" : "") + `</small>`;
+      }
+      card.appendChild(bar);
+    }
+    return card;
+  }
+  const rushEl = document.getElementById("sbRush");
+  rushEl.innerHTML = "";
+  rushEl.appendChild(rushCard("p1", s.myRisk, s.killP2, s.tlP1.prodTotal));
+  rushEl.appendChild(rushCard("p2", s.theirRisk, s.killP1, s.tlP2.prodTotal));
+
+  const groups = document.getElementById("groups");
+  groups.innerHTML = "";
+  let wrap = document.createElement("div");
+  wrap.className = "grouplist";
+
+  function planetRow(q, viaText) {
+    const div = document.createElement("div");
+    div.className = "planet-row";
+    div.innerHTML = `<span><span class="n">n${q.n}</span> p${q.prod} c${q.cost}</span><span class="via">${viaText}</span>`;
+    return div;
+  }
+
+  let comboBlockSeq = 0;
+  const VISIBLE_COMBOS = 6;   // rows shown before the list collapses
+  function comboRow(container, c, side, horizon = 60) {
+    const { combo, versus, rushTime, exposed, improves, before, prodTotal, cost, theirAtLaunch, mineAtArrival, defense, pinned, affordable, lastCapture, status, trade } = c;
+    const f = x => (!isFinite(x) ? "never" : x === 0 ? "0s" : x.toFixed(1) + "s");
+    const key = side + ":" + combo.join(",");
+    const active = sandboxFocus && sandboxFocus.key === key;
+    const box = document.createElement("div");
+    box.className = "combo-item" + (active ? " combo-item-active" : "");
+    box.title = "Click: show only these planets. Double-click: take them.";
+    box.innerHTML = `<div class="planet-row"><span>${combo.map(n => "n" + n).join(" → ")}</span>`
+      + `<span class="via">${prodTotal} prod · c${cost}</span></div>`;
+    // Four numbers only: versus timer, the attacker's flight to this
+    // cluster, when the last planet is in hand, and both fleets at arrival.
+    const A = other(side);
+    const col = sd => sd === "p1" ? "var(--home)" : "var(--ehome)";
+    const canRush = isFinite(rushTime);
+    const ships = canRush
+      ? `<b style="color:${col(side)}">${Math.round(defense)}</b> vs <b style="color:${col(A)}">${Math.round(theirAtLaunch)}</b>`
+      : "—";
+    const tag = (c.locksThem ? `<span class="cr-tag green">locks out ${PN(A).replace("Player ", "P")}</span>` : "")
+      + (c.lockedBy ? `<span class="cr-tag red">${PN(A).replace("Player ", "P")} locks you out</span>` : "")
+      + (improves ? `<span class="cr-tag amber">digs out</span>`
+         : status === "trade" ? `<span class="cr-tag amber">survives rush</span>` : "");
+    const grid = document.createElement("div");
+    grid.className = "cr-grid";
+    const sgn = x => (x >= 0 ? "+" : "−") + Math.abs(Math.round(x));
+    const lead = c.lead3 != null ? c.lead3 : c.lead2;
+    const leadCol = lead >= 0 ? "#4ade80" : "#ff7a7a";
+    const seqTxt = a => a.map(n => "n" + n).join(" → ");
+    grid.innerHTML = (c.lead2 != null
+        ? `<span>Ship lead at ${horizon}s</span><b style="color:${leadCol}">${sgn(lead)}</b>`
+          + `<span>${PN(A)} best reply</span><b>${c.reply && c.reply.length ? seqTxt(c.reply) : "none"}`
+          + `${c.reply && c.reply.length ? ` <em>(${sgn(c.lead2)})</em>` : ""}</b>`
+          + (c.counter ? `<span>${PN(side)} counter</span><b>${seqTxt(c.counter)} <em>(${sgn(c.lead3)})</em></b>` : "")
+        : "")
+      + `<span>Versus timer</span><b>${f(versus)}</b>`
+      + `<span>${PN(A)} fleet reaches</span><b>${canRush ? f(rushTime) : "can't rush"}</b>`
+      + `<span>Last capture</span><b>${f(lastCapture)}</b>`
+      + `<span>Ships at arrival <em>(${PN(side).replace("Player ", "P")} vs ${PN(A).replace("Player ", "P")})</em></span><b>${ships}</b>`;
+    if (tag) box.querySelector(".planet-row span").insertAdjacentHTML("beforeend", tag);
+    box.appendChild(grid);
+    if (c.recipe && c.recipe.length) {
+      const rc = document.createElement("div");
+      rc.className = "cr-recipe";
+      rc.innerHTML = `<span>Sends</span>` + recipeHTML(c.recipe, side === "p1" ? s.home.n : s.ehome.n);
+      box.appendChild(rc);
+    }
+    box.addEventListener("click", ev => {
+      // Second click on the same combo within DBL_MS = double-click: take
+      // those planets for that side. Detected manually because the first
+      // click re-renders the sidebar, so the browser never sees two clicks
+      // on the same element and its dblclick event wouldn't fire. Uses the
+      // event's own timestamp (when the click happened), not when it got
+      // handled -- the solver can take a moment, and a queued second click
+      // would otherwise look too late.
+      const now = ev.timeStamp;
+      if (lastComboClick.key === key && now - lastComboClick.t < DBL_MS) {
+        lastComboClick = { key: null, t: 0 };
+        for (const n of combo) ownSet(n, side);
+        sandboxFocus = null;
+        refresh();
+        return;
+      }
+      lastComboClick = { key, t: now };
+      sandboxFocus = active ? null : { key, side, planets: combo.slice(), reply: (c.reply || []).slice(), counter: (c.counter || []).slice() };
+      refreshView();   // focus only: no recompute
+    });
+    container.appendChild(box);
+  }
+  function comboBlock(title, dotColor, combos, side) {
+    const rejected = combos.rejected || 0;
+    if (!combos.length && !rejected) return;
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${dotColor}"></span>${title}`;
+    wrap.appendChild(h);
+
+    // Summary: how many passed the rush check, how many were thrown out,
+    // and the best cluster prod (home included).
+    const summary = document.createElement("div");
+    summary.style.cssText = "font-size:11px; color:var(--text2); margin:-4px 0 8px;";
+    const total = combos.totalFound || combos.length;
+    summary.textContent = !combos.length
+      ? `None -- all ${rejected} options checked are rushable.`
+      : `${total} safe${total > combos.length ? ` (top ${combos.length} shown)` : ""}`
+        + (rejected ? ` · ${rejected} rushable` : "")
+        + (combos.capped ? " · search capped" : "")
+        + `. Ranked by ships ahead at ${combos.horizon || 60}s after the other player's best reply; lines that leave them no safe move ("locks out") rank first. Click to see the line on the map, double-click to take.`;
+    wrap.appendChild(summary);
+    if (!combos.length) return;
+
+    const keyOf = c => side + ":" + c.combo.join(",");
+    const visible = combos.slice(0, VISIBLE_COMBOS);
+    const rest = combos.slice(VISIBLE_COMBOS);
+    for (const c of visible) comboRow(wrap, c, side, combos.horizon);
+
+    if (rest.length) {
+      // stay open across re-renders if the focused combo lives in here
+      const open = !!(sandboxFocus && rest.some(c => keyOf(c) === sandboxFocus.key));
+      const moreWrap = document.createElement("div");
+      moreWrap.id = `comboMore${comboBlockSeq++}`;
+      moreWrap.style.cssText = `display:${open ? "block" : "none"}; max-height:280px; overflow-y:auto; padding-right:4px; margin-bottom:6px;`;
+      for (const c of rest) comboRow(moreWrap, c, side, combos.horizon);
+      wrap.appendChild(moreWrap);
+
+      const toggle = document.createElement("button");
+      toggle.className = "mode-btn";
+      toggle.style.cssText = "width:100%; margin-bottom:10px; font-size:11px; padding:4px;";
+      toggle.textContent = open ? "Hide" : `Show ${rest.length} more`;
+      toggle.addEventListener("click", () => {
+        const isHidden = moreWrap.style.display === "none";
+        moreWrap.style.display = isHidden ? "block" : "none";
+        toggle.textContent = isHidden ? "Hide" : `Show ${rest.length} more`;
+      });
+      wrap.appendChild(toggle);
+    }
+  }
+  // Every currently live-eligible combo (up to 4 planets, instant-afford
+  // OR production-funded within the Max wait cap -- same unlocker math
+  // Structural rings uses), ranked by production -- NOT restricted to
+  // the "punish" subset, since most of a side's ordinary good expansions
+  // are already baseline-eligible too and are still valid answers to
+  // "what can I/they safely do." Long result sets collapse behind a
+  // "Show N more" toggle rather than dumping everything at once.
+  comboBlock("Player 1 best expansions (ranked by lead after reply)", "#ffce6b", s.comboP1, "p1");
+  comboBlock("Player 2 best expansions (ranked by lead after reply)", "#ff7a7a", s.comboP2, "p2");
+
+  // "Rush the 12, then take the 8": only when a cluster's front planet can
+  // be traded away AND the rusher can bank the trade with an expansion the
+  // other side can't punish. side = the rusher.
+  function rushExpandBlock(title, dotColor, risk, side) {
+    const tr = risk && risk.trade;
+    if (!tr || !tr.followUps || !tr.followUps.length) return;
+    const f = x => (!isFinite(x) ? "never" : x.toFixed(1) + "s");
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${dotColor}"></span>${title}`;
+    wrap.appendChild(h);
+    const RA = PN(side), RD = PN(other(side));
+    const summary = document.createElement("div");
+    summary.style.cssText = "font-size:11px; color:var(--text2); margin:-4px 0 8px;";
+    summary.textContent = `${RA}'s rush takes n${tr.q.n} at ${f(tr.T)}; each line below then expands `
+      + `somewhere ${RD}'s counter-rush can't punish, so the trade sticks. Click to highlight.`;
+    wrap.appendChild(summary);
+    const list = document.createElement("div");
+    list.style.cssText = "max-height:220px; overflow-y:auto; padding-right:4px; margin-bottom:8px;";
+    for (const fu of tr.followUps) {
+      const planets = [tr.q.n, ...fu.Y.map(y => y.n)];
+      const key = "rx:" + side + ":" + planets.join(",");
+      const active = sandboxFocus && sandboxFocus.key === key;
+      const box = document.createElement("div");
+      box.className = "combo-item" + (active ? " combo-item-active" : "");
+      box.innerHTML = `<div class="planet-row"><span>rush n${tr.q.n}, then ${fu.Y.map(y => "n" + y.n).join(" + ")}</span>`
+        + `<span class="via">${fu.prodThem} prod · c${fu.cost}</span></div>`;
+      const d = document.createElement("div");
+      d.style.cssText = "font-size:10px; margin-top:1px; color:#e8b45a;";
+      const c = fu.counter;
+      d.textContent = `taken by ~${f(fu.lastCap)}; ${RD}'s best counter-rush ${isFinite(c.margin) ? `${Math.round(c.mine)} vs ${Math.round(c.defense)} defending` : "can't reach"}`
+        + ` -- prod after: ${RA} ${fu.prodThem} vs ${RD} ${tr.myProd2}`;
+      box.appendChild(d);
+      box.addEventListener("click", () => {
+        sandboxFocus = active ? null : { key, side, planets };
+        refreshView();
+      });
+      list.appendChild(box);
+    }
+    wrap.appendChild(list);
+  }
+  rushExpandBlock("Player 2 rush-then-expand lines", "#ff7a7a", s.myRisk, "p2");
+  rushExpandBlock("Player 1 rush-then-expand lines", "#ffce6b", s.theirRisk, "p1");
+
+  const punishRows = Object.keys(s.forP1.punish).map(Number).sort((a, b) => a - b)
+    .map(n => planetRow(s.byN[n], `ratio ${s.forP1.punish[n].ratio.toFixed(2)}`));
+  if (punishRows.length) {
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:#ffce6b"></span>Punish set (live-eligible, not baseline-eligible)`;
+    wrap.appendChild(h);
+    for (const row of punishRows) wrap.appendChild(row);
+  }
+
+  const theirsRows = Object.entries(s.forP2.live).filter(([, v]) => v.eligible).map(([n]) => Number(n))
+    .sort((a, b) => a - b).map(n => planetRow(s.byN[n], `ratio ${s.forP2.live[n].ratio.toFixed(2)}`));
+  if (theirsRows.length) {
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:#ff7a7a"></span>Eligible for Player 2 right now`;
+    wrap.appendChild(h);
+    for (const row of theirsRows) wrap.appendChild(row);
+  }
+
+  // Transparency for everything NOT shown as eligible -- the actual
+  // gating reason (reach cap, payoff cap, contested, unaffordable, or
+  // genuinely unsafe) instead of a silent omission.
+  function whyBlock(title, dotColor, pairs) {
+    if (!pairs.length) return;
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${dotColor}"></span>${title}`;
+    wrap.appendChild(h);
+    for (const [q, reason] of pairs) wrap.appendChild(planetRow(q, reason));
+  }
+  // Not-recommended planets: hidden behind one toggle (the focus is what
+  // CAN be taken); open state survives re-renders.
+  const nWhy = s.whyNotP1.length + s.whyNotP2.length;
+  if (nWhy) {
+    const t = document.createElement("button");
+    t.className = "mode-btn";
+    t.style.cssText = "width:100%; margin:6px 0 8px; font-size:11px; padding:5px;";
+    t.textContent = whyOpen ? "Hide planets not recommended" : `Show planets not recommended (${nWhy})`;
+    t.addEventListener("click", () => { whyOpen = !whyOpen; refreshView(); });
+    wrap.appendChild(t);
+    if (whyOpen) {
+      const box = document.createElement("div");
+      box.className = "why-list";
+      const saved = wrap;
+      wrap = box;
+      whyBlock("Not recommended for Player 1", "var(--home)", s.whyNotP1);
+      whyBlock("Not recommended for Player 2", "var(--ehome)", s.whyNotP2);
+      wrap = saved;
+      wrap.appendChild(box);
+    }
+  }
+
+  groups.appendChild(wrap);
+}
+
+// ── controls / state ─────────────────────────────────────────────────────
+let currentHeader = null;
+window.__lastParams = null;
+let currentMode = "structural";
+
+function readParams() {
+  return {
+    reserve: Number(document.getElementById("reserve").value),
+    safety: Number(document.getElementById("safety").value),
+    reachFrac: Number(document.getElementById("reach").value),
+    maxPayoff: Number(document.getElementById("payoff").value),
+    maxWait: Number(document.getElementById("wait").value),
+    homeShare: Number(document.getElementById("share").value),
+    contestTol: Number(document.getElementById("tol").value),
+    defEff: Number(document.getElementById("defEff").value) / 100,
+    allowTrade: document.getElementById("allowTrade").checked,
+    horizon: Number(document.getElementById("horizon").value),
+    react: Number(document.getElementById("react").value),
+  };
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById("modeStructural").classList.toggle("mode-btn-active", mode === "structural");
+  document.getElementById("modeTimeline").classList.toggle("mode-btn-active", mode === "timeline");
+  document.getElementById("modeSandbox").classList.toggle("mode-btn-active", mode === "sandbox");
+  syncParamsPanel();
+  document.getElementById("summaryBlock").style.display = mode === "sandbox" ? "none" : "";
+  document.getElementById("sandboxBlock").style.display = mode === "sandbox" ? "block" : "none";
+  // header stats only make sense in Sandbox; updateHeaderStats shows them
+  if (mode !== "sandbox") document.getElementById("hdrStats").style.display = "none";
+  document.getElementById("hdrHint").style.display = mode === "sandbox" ? "" : "none";
+  // order/wave legend only applies to the ring/timeline colorings
+  document.getElementById("legendBlock").style.display = mode === "sandbox" ? "none" : "";
+  closeAssignMenu();
+  document.getElementById("modeDesc").textContent =
+    mode === "structural" ? "Safety/reach/payoff-based order (1/2/3...), calibrated against real capture behavior."
+    : mode === "timeline" ? "Real ships/production math (esparano's vacuum algorithm), no free parameters beyond a corpus-measured speed constant. Validated: median 1.21s error across 1928 real captures, vs 10.76s for naive sequential greedy."
+    : "Manually assign neutrals to either side and see live reachability + punish opportunities recompute -- no mirror assumption, just the actual clicked board state.";
+  refresh();
+}
+
+document.getElementById("modeStructural").addEventListener("click", () => setMode("structural"));
+document.getElementById("modeTimeline").addEventListener("click", () => setMode("timeline"));
+document.getElementById("modeSandbox").addEventListener("click", () => setMode("sandbox"));
+document.getElementById("sandboxReset").addEventListener("click", () => { sandboxOwn = {}; sandboxStamp = {}; sandboxFocus = null; refresh(); });
+document.getElementById("sbClearFocus").addEventListener("click", () => { sandboxFocus = null; refreshView(); });
+
+for (const [id, key] of [["lblProd", "prod"], ["lblCost", "cost"], ["lblPayoff", "payoff"], ["lblId", "id"]]) {
+  const box = document.getElementById(id);
+  labelOpts[key] = box.checked;
+  box.addEventListener("change", () => { labelOpts[key] = box.checked; refresh(); });
+}
+
+
+// Re-draw the sandbox from the last computed result (highlight/expand
+// changes only) -- instant, so clicks and double-clicks stay responsive.
+let lastSandbox = null;
+function refreshView() {
+  if (currentMode !== "sandbox" || !lastSandbox) return refresh();
+  const y = document.querySelector(".aside-scroll") ? document.querySelector(".aside-scroll").scrollTop : null;
+  renderSandbox(lastSandbox);
+  updateSidebarSandbox(lastSandbox);
+  if (y != null) document.querySelector(".aside-scroll").scrollTop = y;
+}
+
+function refresh() {
+  if (!currentHeader) return;
+  if (currentMode === "timeline") {
+    let result;
+    try {
+      result = analyzeTimeline(currentHeader);
+    } catch (e) {
+      alert("Could not compute a predicted timeline for this map: " + e.message);
+      return;
+    }
+    renderTimeline(result);
+    updateSidebarTimeline(result);
+    return;
+  }
+  if (currentMode === "sandbox") {
+    let result;
+    try {
+      result = computeSandbox(currentHeader);
+    } catch (e) {
+      alert("Could not compute sandbox reachability for this map: " + e.message);
+      return;
+    }
+    lastSandbox = result;
+    renderSandbox(result);
+    updateSidebarSandbox(result);
+    return;
+  }
+  const params = readParams();
+  window.__lastParams = params;
+  let result;
+  try {
+    result = analyze(currentHeader, params);
+  } catch (e) {
+    alert("Could not analyze this map: " + e.message);
+    return;
+  }
+  render(result);
+  updateSidebar(result);
+}
+
+const sliderIds = ["reserve", "safety", "reach", "payoff", "wait", "share", "tol", "defEff", "horizon", "react"];
+const labelMap = { reserve: "v-reserve", safety: "v-safety", reach: "v-reach", payoff: "v-payoff", wait: "v-wait", share: "v-share", tol: "v-tol", defEff: "v-defEff", horizon: "v-horizon", react: "v-react" };
+const fmt = { reserve: v => v, safety: v => Number(v).toFixed(2), reach: v => Number(v).toFixed(2), payoff: v => v, wait: v => v, share: v => Number(v).toFixed(2), tol: v => Number(v).toFixed(2), defEff: v => v, horizon: v => v, react: v => Number(v).toFixed(2).replace(/0$/, "") };
+
+for (const id of sliderIds) {
+  const input = document.getElementById(id);
+  input.addEventListener("input", () => {
+    document.getElementById(labelMap[id]).textContent = fmt[id](input.value);
+    refresh();
+  });
+}
+
+document.getElementById("allowTrade").addEventListener("change", refresh);
+
+// Model parameters live behind the ⚙ button in the Model panel -- they're
+// approved defaults, not something to tune day to day. Only shown in the
+// modes that use them (Structural rings, Sandbox).
+let paramsOpen = false;
+function syncParamsPanel() {
+  const usesParams = currentMode === "sandbox" || currentMode === "structural";
+  document.getElementById("paramsToggle").style.display = usesParams ? "" : "none";
+  document.getElementById("paramsToggle").classList.toggle("open", paramsOpen && usesParams);
+  document.getElementById("paramsBlock").style.display = paramsOpen && usesParams ? "block" : "none";
+}
+document.getElementById("paramsToggle").addEventListener("click", () => { paramsOpen = !paramsOpen; syncParamsPanel(); });
+document.getElementById("paramsReset").addEventListener("click", () => {
+  for (const id of ["reserve", "safety", "reach", "payoff", "wait", "share", "tol", "horizon"]) {
+    const input = document.getElementById(id);
+    input.value = input.defaultValue;
+    document.getElementById(labelMap[id]).textContent = fmt[id](input.value);
+  }
+  refresh();
+});
+syncParamsPanel();
+
+function handleFile(file) {
+  document.getElementById("filename").textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let games;
+    try {
+      games = splitGames(reader.result);
+    } catch (e) {
+      alert(e.message);
+      currentHeader = null;
+      return;
+    }
+    if (!games.length) {
+      alert('No map header found in this file (looked for a type:"init" line, or a payload.chunk:0 line).');
+      currentHeader = null;
+      return;
+    }
+    populateGameSelect(games, file.name);
+  };
+  reader.readAsText(file);
+}
+
+function gameLabel(h, idx, n) {
+  const p1 = h.player_name || "?", p2 = h.enemy_name || "?";
+  const style = h.style ? ` [${h.style}${h.style_ver ? " v" + h.style_ver : ""}]` : "";
+  return n > 1 ? `${idx + 1}/${n}: ${p1} vs ${p2}${style}` : `${p1} vs ${p2}${style}`;
+}
+
+function headerIsValid(h) {
+  const p1n = h.player_n, p2n = h.enemy_n;
+  const owners = new Set((h.map || []).map(p => p.owner));
+  return owners.has(p1n) && owners.has(p2n);
+}
+
+function populateGameSelect(games, filename) {
+  const sel = document.getElementById("gameSelect");
+  sel.innerHTML = "";
+  sel.style.display = games.length > 1 ? "inline-block" : "none";
+  games.forEach((h, i) => {
+    const opt = document.createElement("option");
+    opt.value = i;
+    const valid = headerIsValid(h);
+    opt.textContent = gameLabel(h, i, games.length) + (valid ? "" : "  (invalid header)");
+    if (!valid) opt.disabled = true;
+    sel.appendChild(opt);
+  });
+  // default to the first VALID game, not just the first game -- the first
+  // block in a batch file is often a degenerate leftover (host in lobby,
+  // an aborted match) rather than real play.
+  const firstValid = games.findIndex(headerIsValid);
+  const startIdx = firstValid >= 0 ? firstValid : 0;
+  sel.value = startIdx;
+  window.__games = games;
+  window.__filename = filename;
+  selectGame(startIdx);
+}
+
+function selectGame(idx) {
+  currentHeader = window.__games[idx];
+  sandboxOwn = {}; sandboxStamp = {};  // new game/header -> sandbox assignments no longer apply
+  sandboxFocus = null;
+  const n = window.__games.length;
+  document.getElementById("filename").textContent =
+    n > 1 ? `${window.__filename} (game ${Number(idx) + 1} of ${n})` : window.__filename;
+  if (!headerIsValid(currentHeader)) {
+    alert("This game's header is inconsistent (home planet missing for one or both players) -- pick a different game from the dropdown.");
+    return;
+  }
+  refresh();
+}
+
+document.getElementById("gameSelect").addEventListener("change", (e) => selectGame(Number(e.target.value)));
+
+document.getElementById("file").addEventListener("change", (e) => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+const stage = document.getElementById("stage");
+stage.addEventListener("dragover", (e) => { e.preventDefault(); stage.classList.add("drag"); });
+stage.addEventListener("dragleave", () => stage.classList.remove("drag"));
+stage.addEventListener("drop", (e) => {
+  e.preventDefault();
+  stage.classList.remove("drag");
+  if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

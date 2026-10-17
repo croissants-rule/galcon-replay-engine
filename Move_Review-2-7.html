@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move Review</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a; --text:#e6e8ee; --muted:#8b93a7;
+  --brilliant:#2ec4d6; --best:#3fb950; --excellent:#8bd46e; --good:#c3c96a; --inaccuracy:#e3c84a;
+  --mistake:#f08c3a; --blunder:#f04a4a; --unclear:#7d8596; --alt:#7ee08a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button,select,input{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+button{cursor:pointer} button:hover{border-color:#4a5263}
+#top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+#top label.file{display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:4px 10px;border:1px dashed #4a5263;border-radius:6px}
+#top label.file input{display:none}
+#status{color:var(--muted)}
+#main{display:grid;grid-template-columns:1fr 380px;height:calc(100% - 46px)}
+#left{display:flex;flex-direction:column;min-width:0;min-height:0}
+#mapwrap{flex:1;min-height:0;position:relative}
+#map{position:absolute;inset:0;width:100%;height:100%}
+#tl{height:120px;width:100%;display:block;border-top:1px solid var(--line);cursor:pointer}
+#controls{display:flex;gap:8px;align-items:center;padding:6px 10px;border-top:1px solid var(--line);background:var(--panel)}
+#clock{min-width:70px;font-variant-numeric:tabular-nums}
+#right{display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--line);background:var(--panel)}
+#detail{padding:10px 12px;border-bottom:1px solid var(--line);min-height:190px}
+#detail h3{margin:0 0 6px;font-size:15px;display:flex;gap:8px;align-items:center}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:600;color:#0f1115}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin-top:6px}
+.kv div:nth-child(odd){color:var(--muted)}
+.wpbar{position:relative;height:16px;background:var(--panel2);border-radius:4px;margin:8px 0 2px;overflow:hidden}
+.wpbar span{position:absolute;top:0;bottom:0;width:2px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;color:var(--muted);font-size:11px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+#filters{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+#gradeChecks{display:flex;flex-wrap:wrap;gap:4px}
+#gradeChecks label{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:10px;background:var(--panel2);cursor:pointer;font-size:12px}
+#list{flex:1;overflow:auto}
+#list .row{display:grid;grid-template-columns:86px 52px 1fr 52px;gap:6px;padding:4px 12px;border-bottom:1px solid #20242d;cursor:pointer;align-items:center}
+#list .row:hover{background:var(--panel2)} #list .row.sel{background:#263042}
+#list .row .t{color:var(--muted);font-variant-numeric:tabular-nums}
+#list .row .loss{text-align:right;font-variant-numeric:tabular-nums}
+#empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:30px;pointer-events:none}
+.muted{color:var(--muted)}
+kbd{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:0 4px;font-size:11px}
+@media (max-width: 820px){
+  html,body{height:auto}
+  #top{padding:8px 10px}
+  #top label.file{flex:1 1 45%;justify-content:center}
+  #gameSel{flex:1 1 100%;max-width:100%}
+  #main{display:block;height:auto}
+  #mapwrap{flex:none;height:auto;aspect-ratio:520/400}
+  #tl{height:96px}
+  #controls{flex-wrap:wrap;gap:6px}
+  #controls button{flex:1 1 30%;padding:8px}
+  #scrub{flex:1 1 100% !important;order:5}
+  #right{border-left:none;border-top:1px solid var(--line)}
+  #detail{min-height:0}
+  #list{max-height:60vh}
+  #list .row{grid-template-columns:82px 46px 1fr 46px;padding:8px 10px}
+}
+</style>
+</head>
+<body>
+<div id="top">
+  <label class="file">Replays (.jsonl)<input id="fReplays" type="file" multiple></label>
+  <label class="file">Grades (grade_moves_decisions.csv)<input id="fGrades" type="file"></label>
+  <select id="gameSel" disabled><option>— game —</option></select>
+  <span id="status">Load the replay files and the grades CSV.</span>
+</div>
+<div id="main">
+  <div id="left">
+    <div id="mapwrap"><canvas id="map"></canvas><div id="empty">Choose the replay .jsonl file(s) and grade_moves_decisions.csv above.<br><br>
+      <span class="muted">Keys: <kbd>↑</kbd>/<kbd>↓</kbd> previous/next send in the list · <kbd>Space</kbd> play the send's window · <kbd>←</kbd>/<kbd>→</kbd> step 0.1 s (<kbd>Shift</kbd> 1 s)</span></div></div>
+    <canvas id="tl"></canvas>
+    <div id="controls">
+      <button id="bPrev" title="Previous send (↑)">◀ send</button>
+      <button id="bPlay" title="Play the graded window (Space)">▶ play window</button>
+      <button id="bNext" title="Next send (↓)">send ▶</button>
+      <span id="clock">0.0 s</span>
+      <input id="scrub" type="range" min="0" max="0" value="0" style="flex:1">
+      <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+      <label class="muted"><input type="checkbox" id="showIds" checked> ids</label>
+    </div>
+  </div>
+  <div id="right">
+    <div id="detail"><span class="muted">Select a send.</span></div>
+    <div id="filters">
+      <div style="display:flex;gap:6px">
+        <select id="playerSel"><option value="">Both players</option></select>
+        <select id="sortSel"><option value="t">Sort: time</option><option value="loss">Sort: biggest loss</option><option value="gain">Sort: best vs hold</option></select>
+      </div>
+      <label class="muted" title="Compares the simulator's replay of the real send with what really happened at the end of the window"><input type="checkbox" id="gate" checked> Mark as unclear when the simulator's replay of the real send misses what actually happened by more than 0.15 win prob</label>
+      <div id="gradeChecks"></div>
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+<script>
+const GRADES = ['brilliant','best','excellent','good','inaccuracy','mistake','blunder','unclear'];
+const GCOL = Object.fromEntries(GRADES.map(g => [g, getComputedStyle(document.documentElement).getPropertyValue('--' + g).trim()]));
+const DEFAULT_ON = new Set(['brilliant','inaccuracy','mistake','blunder','unclear']);
+const SPEED = 40.25, B_SHIP = 0.064, B_PROD = 0.689;
+const $ = id => document.getElementById(id);
+
+let REPLAYS = {}; let GRADEFILE = '';
+function setStatus(msg, bad) { const el = $('status'); el.textContent = msg; el.style.color = bad ? 'var(--blunder)' : ''; }   // session -> {init, ev}
+let GRADEROWS = []; // parsed csv rows
+let G = null;       // prepared game
+let tick = 0, selIdx = -1, playing = null, viewRows = [];
+
+// ---------------------------------------------------------------- loading
+function parseCSV(text) {
+  const rows = []; let i = 0, field = '', row = [], q = false;
+  while (i < text.length) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
+    i++;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  const head = rows.shift(); return rows.filter(r => r.length === head.length).map(r => Object.fromEntries(head.map((h, j) => [h, r[j]])));
+}
+function parseReplay(text) {
+  let init = null, ev = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let o; try { o = JSON.parse(line); } catch (e) { continue; }
+    if (!o || typeof o !== 'object' || !('type' in o)) continue;
+    if (o.type === 'init') { if (init && !REPLAYS[init.session]) REPLAYS[init.session] = { init, ev }; init = o; ev = []; }
+    else if (Array.isArray(o.events)) for (const e of o.events) ev.push(e);
+  }
+  if (init && !REPLAYS[init.session]) REPLAYS[init.session] = { init, ev };
+}
+const readText = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(f); });
+$('fReplays').onchange = async e => {
+  $('status').textContent = 'Reading replays…';
+  for (const f of e.target.files) parseReplay(await readText(f));
+  refreshGames();
+};
+$('fGrades').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  let rows = parseCSV((await readText(f)).replace(/^\uFEFF/, ''));
+  const need = ['game', 't', 'player', 'source', 'target', 'ships', 'grade', 'loss'];
+  const missing = rows.length ? need.filter(k => !(k in rows[0])) : need;
+  if (missing.length) {
+    GRADEROWS = []; refreshGames();
+    const isPlayers = rows.length && 'mean_loss' in rows[0];
+    setStatus(isPlayers ? `“${f.name}” is the per-player summary. Load grade_moves_decisions.csv instead (same folder).`
+                        : `“${f.name}” isn't a grades file (missing columns: ${missing.join(', ')}). Load grade_moves_decisions.csv.`, true);
+    return;
+  }
+  for (const r of rows) r.game = String(r.game).trim();
+  GRADEROWS = rows; GRADEFILE = f.name;
+  for (const r of GRADEROWS) {
+    r.grade0 = r.grade;
+    const simReal = ('raw_wp_real' in r && r.raw_wp_real !== '') ? +r.raw_wp_real : +r.wp_real;   // older CSVs stored the retake-adjusted WP in wp_real
+    r.simErr = Math.abs(simReal - +r.wp_true_at_horizon);
+  }
+  for (const r of GRADEROWS) { r.t = +r.t; r.loss = +r.loss; r.ships = +r.ships; for (const k of ['wp_start','wp_real','wp_best','wp_hold','wp_true_at_horizon','horizon_s','pct','timing_spread_real','timing_spread_best','adj_loss']) r[k] = r[k] === undefined || r[k] === '' ? NaN : +r[k]; }
+  applyGate(); refreshGames();
+};
+const GATE = 0.15;
+function applyGate() {
+  const on = $('gate').checked;
+  for (const r of GRADEROWS) {
+    r.grade = r.grade0; r.reason = r.grade0 === 'unclear' ? 'outcome flips with 0.2 s of landing timing' : '';
+    if (on && r.grade0 !== 'unclear' && r.simErr > GATE) { r.grade = 'unclear'; r.reason = `simulator's replay of the real send ended ${r.simErr.toFixed(2)} away from what actually happened`; }
+  }
+}
+function refreshGames() {
+  const sessions = Object.keys(REPLAYS).sort();
+  const graded = new Set(GRADEROWS.map(r => r.game));
+  const sel = $('gameSel'); sel.innerHTML = '';
+  for (const s of sessions) {
+    const R = REPLAYS[s]; const n = GRADEROWS.filter(r => r.game === s).length;
+    const o = document.createElement('option'); o.value = s;
+    o.textContent = `${s}  ${R.init.player_name} vs ${R.init.enemy_name}` + (GRADEROWS.length ? `  (${n} graded)` : '');
+    if (GRADEROWS.length && !graded.has(s)) o.textContent += ' — no grades';
+    sel.appendChild(o);
+  }
+  sel.disabled = !sessions.length;
+  if (!sessions.length) { setStatus(GRADEROWS.length ? `Grades loaded (${GRADEROWS.length} sends). Now load the replay .jsonl files.` : 'Load the replay files and the grades CSV.'); return; }
+  if (!GRADEROWS.length) setStatus(`${sessions.length} game(s) loaded. Now load grade_moves_decisions.csv to see the grades.`);
+  else {
+    const gGames = [...graded], matched = sessions.filter(s => graded.has(s)).length;
+    if (!matched) setStatus(`None of the ${gGames.length} games in ${GRADEFILE} match the ${sessions.length} loaded replays (grades: ${gGames.slice(0, 2).join(', ')}…; replays: ${sessions.slice(0, 2).join(', ')}…). Load the replays the grader ran on.`, true);
+    else setStatus(`${sessions.length} game(s) loaded, ${matched} with grades · ${GRADEROWS.length} graded sends`);
+  }
+  if (sessions.length) { const first = sessions.find(s => graded.has(s)) || sessions[0]; sel.value = first; loadGame(first); }
+}
+$('gameSel').onchange = e => loadGame(e.target.value);
+
+// ---------------------------------------------------------------- game reconstruction (same rules as grade_moves.py)
+const K = t => Math.round(t * 10);
+function prepare(init, ev) {
+  const P = init.map.map(p => ({ n: p.n, x: p.x, y: p.y, r: p.r, prod: p.prod, o: p.owner, s: +p.ships }));
+  const idx = Object.fromEntries(P.map((p, i) => [p.n, i]));
+  const neutral = init.map.map(p => p.owner).filter(o => o !== init.player_n && o !== init.enemy_n);
+  const NEU = neutral.length ? neutral[0] : 1;
+  const by = new Map(); let last = 0;
+  for (const e of ev) { const k = K(e.t); if (!by.has(k)) by.set(k, []); by.get(k).push(e); if (k > last) last = k; }
+  const T = last + 1, NP = P.length;
+  const own = new Int16Array(T * NP), ships = new Float32Array(T * NP);
+  const fleets = new Map(); const cur = new Map();
+  const srcOf = (x, y) => { let b = 0, bd = 1e9; P.forEach((p, i) => { const d = Math.abs(Math.hypot(p.x - x, p.y - y) - p.r); if (d < bd) { bd = d; b = i; } }); return b; };
+  for (let k = 0; k <= last; k++) {
+    for (const p of P) if (p.o !== NEU) p.s += p.prod / 50 * 0.1;
+    const lands = []; const E = by.get(k) || [];
+    for (const e of E) {
+      if (e.e === 'fs') {
+        const s = srcOf(e.x, e.y); P[s].s -= e.s;
+        fleets.set(e.id, { id: e.id, o: e.o, src: s, k0: k, s: e.s, x: e.x, y: e.y, segs: [{ k, tg: idx[e.tg] }], drops: [] });
+        cur.set(e.id, e.s);
+      } else if (e.e === 'fr' && fleets.has(e.id)) {
+        fleets.get(e.id).segs.push({ k, tg: idx[e.tg] });
+      } else if ((e.e === 'fu' || e.e === 'fd') && fleets.has(e.id)) {
+        const f = fleets.get(e.id); const c = cur.get(e.id);
+        const drop = e.e === 'fu' ? c - e.s : c; cur.set(e.id, e.e === 'fu' ? e.s : 0);
+        if (drop > 0) { const tg = f.segs[f.segs.length - 1].tg; f.drops.push({ k, tg, a: drop }); lands.push([tg, f.o, drop]); }
+      }
+    }
+    for (const [tg, o, a] of lands) { const p = P[tg]; if (o === p.o) p.s += a; else { p.s -= a; if (p.s < 0) { p.o = o; p.s = -p.s; } } }
+    for (const e of E) { if (e.e === 'pn' && e.n in idx) P[idx[e.n]].s = +e.s; else if (e.e === 'pc' && e.n in idx) P[idx[e.n]].o = e.o; }
+    for (let i = 0; i < NP; i++) { own[k * NP + i] = P[i].o; ships[k * NP + i] = P[i].s; }
+  }
+  // fleet segment geometry
+  const geo = init.map.map(p => ({ x: p.x, y: p.y, r: p.r }));
+  for (const f of fleets.values()) {
+    let sx = f.x, sy = f.y;
+    f.segs.forEach((sg, j) => {
+      sg.sx = sx; sg.sy = sy;
+      const t = geo[sg.tg], d = Math.hypot(t.x - sx, t.y - sy) || 1;
+      sg.ex = t.x - (t.x - sx) / d * t.r; sg.ey = t.y - (t.y - sy) / d * t.r;
+      const dr = f.drops.find(dd => dd.k >= sg.k && dd.tg === sg.tg);
+      sg.ka = dr ? Math.max(sg.k + 1, dr.k) : sg.k + Math.max(1, Math.round(Math.max(0, d - t.r) / SPEED * 10));
+      const nxt = f.segs[j + 1];
+      if (nxt) { const fr = Math.min(1, (nxt.k - sg.k) / (sg.ka - sg.k)); sx = sg.sx + (sg.ex - sg.sx) * fr; sy = sg.sy + (sg.ey - sg.sy) * fr; }
+    });
+    let acc = 0; f.cum = f.drops.map(d => (acc += d.a, { k: d.k, acc }));
+    f.kEnd = f.drops.length && acc >= f.s - 0.5 ? f.drops[f.drops.length - 1].k : f.segs[f.segs.length - 1].ka + 20;
+  }
+  // win probability (raw v2 logistic, same as the grader) for player_n, per tick
+  const wp = new Float32Array(T); const fl = [...fleets.values()];
+  const flying = new Float32Array(T * 2);
+  for (const f of fl) {
+    const side = f.o === init.player_n ? 0 : f.o === init.enemy_n ? 1 : -1; if (side < 0) continue;
+    let di = 0, rem = f.s;
+    for (let k = f.k0; k <= Math.min(last, f.kEnd); k++) { while (di < f.drops.length && f.drops[di].k <= k) rem -= f.drops[di++].a; if (rem > 0) flying[k * 2 + side] += rem; }
+  }
+  for (let k = 0; k <= last; k++) {
+    let sa = flying[k * 2] - flying[k * 2 + 1], pa = 0;
+    for (let i = 0; i < NP; i++) { const o = own[k * NP + i]; if (o === init.player_n) { sa += ships[k * NP + i]; pa += P[i].prod / 50; } else if (o === init.enemy_n) { sa -= ships[k * NP + i]; pa -= P[i].prod / 50; } }
+    wp[k] = 1 / (1 + Math.exp(-Math.max(-50, Math.min(50, B_SHIP * sa + B_PROD * pa))));
+  }
+  const col = o => o === init.player_n ? '#' + init.player_color : o === init.enemy_n ? '#' + init.enemy_color : '#5a6070';
+  return { init, P, idx, NEU, T, NP, own, ships, fleets: fl, geo, wp, last, col,
+           names: { [init.player_n]: init.player_name, [init.enemy_n]: init.enemy_name } };
+}
+
+function loadGame(sess) {
+  stop();
+  const R = REPLAYS[sess]; if (!R) return;
+  G = prepare(R.init, R.ev);
+  G.rows = GRADEROWS.filter(r => r.game === sess).sort((a, b) => a.t - b.t);
+  for (const r of G.rows) {
+    r.k = K(r.t); r.srcI = G.idx[+r.source]; r.tgI = G.idx[+r.target];
+    r.bestI = r.best_target === 'hold' ? -1 : G.idx[+r.best_target]; r.bestShips = +r.best_ships;
+    r.side = r.player === G.init.player_name ? 0 : 1;
+  }
+  $('scrub').max = G.last; $('empty').style.display = 'none';
+  const ps = $('playerSel'); ps.innerHTML = '<option value="">Both players</option>';
+  for (const nm of [G.init.player_name, G.init.enemy_name]) { const o = document.createElement('option'); o.value = nm; o.textContent = nm; ps.appendChild(o); }
+  buildGradeChecks(); selIdx = -1; buildList();
+  setTick(viewRows.length ? viewRows[0].k : 0); if (viewRows.length) select(0);
+  drawTimeline();
+}
+
+// ---------------------------------------------------------------- list + filters
+function buildGradeChecks() {
+  const box = $('gradeChecks'); if (box.childElementCount) { updateGradeCounts(); return; }
+  for (const g of GRADES) {
+    const l = document.createElement('label'); l.style.borderLeft = `3px solid ${GCOL[g]}`;
+    l.innerHTML = `<input type="checkbox" data-g="${g}" ${DEFAULT_ON.has(g) ? 'checked' : ''}> ${g} <span class="muted" data-c="${g}"></span>`;
+    l.querySelector('input').onchange = () => { buildList(); drawTimeline(); };
+    box.appendChild(l);
+  }
+  updateGradeCounts();
+}
+function updateGradeCounts() {
+  const pl = $('playerSel').value;
+  for (const g of GRADES) { const el = document.querySelector(`[data-c="${g}"]`); if (el) el.textContent = G ? G.rows.filter(r => r.grade === g && (!pl || r.player === pl)).length : ''; }
+}
+$('playerSel').onchange = () => { updateGradeCounts(); buildList(); drawTimeline(); };
+$('sortSel').onchange = () => buildList();
+$('gate').onchange = () => { applyGate(); if (G) { updateGradeCounts(); buildList(); drawTimeline(); drawMap(); if (viewRows[selIdx]) showDetail(viewRows[selIdx]); } };
+function activeGrades() { return new Set([...document.querySelectorAll('#gradeChecks input')].filter(c => c.checked).map(c => c.dataset.g)); }
+function buildList() {
+  if (!G) return;
+  const gs = activeGrades(), pl = $('playerSel').value, sort = $('sortSel').value;
+  const prev = viewRows[selIdx];
+  viewRows = G.rows.filter(r => gs.has(r.grade) && (!pl || r.player === pl));
+  if (sort === 'loss') viewRows.sort((a, b) => b.loss - a.loss);
+  else if (sort === 'gain') viewRows.sort((a, b) => (b.wp_real - b.wp_hold) - (a.wp_real - a.wp_hold));
+  const L = $('list'); L.innerHTML = '';
+  viewRows.forEach((r, i) => {
+    const d = document.createElement('div'); d.className = 'row';
+    d.innerHTML = `<span><span class="badge" style="background:${GCOL[r.grade]}">${r.grade}</span></span><span class="t">${r.t.toFixed(1)}s</span>` +
+      `<span>${esc(r.player)} · ${r.ships} ${r.source}→${r.target}</span><span class="loss">${r.loss.toFixed(3)}</span>`;
+    d.onclick = () => select(i); L.appendChild(d);
+  });
+  selIdx = prev ? viewRows.indexOf(prev) : -1;
+  markSel();
+  if (!viewRows.length) $('detail').innerHTML = '<span class="muted">No sends match the filters.</span>';
+}
+function markSel() { [...$('list').children].forEach((d, i) => d.classList.toggle('sel', i === selIdx)); }
+function select(i) {
+  if (!viewRows.length) return;
+  selIdx = Math.max(0, Math.min(viewRows.length - 1, i)); stop();
+  const r = viewRows[selIdx]; setTick(r.k); markSel();
+  const el = $('list').children[selIdx]; if (el) el.scrollIntoView({ block: 'nearest' });
+  showDetail(r);
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function showDetail(r) {
+  const best = r.best_target === 'hold' ? 'hold (send nothing)' : `${r.bestShips} ships ${r.source} → ${r.best_target}`;
+  const same = r.best_target !== 'hold' && +r.best_target === +r.target;
+  const pct = isNaN(r.pct) ? '' : ` (${Math.round(r.pct * 100)}% of the planet)`;
+  const bar = [['start', r.wp_start, '#8b93a7'], ['hold', r.wp_hold, '#5a6070'], ['real send', r.wp_real, GCOL[r.grade]], ['best', r.wp_best, '#7ee08a'], ['actually happened', r.wp_true_at_horizon, '#ffffff']];
+  $('detail').innerHTML = `<h3><span class="badge" style="background:${GCOL[r.grade]}">${r.grade}</span> ${esc(r.player)} at ${r.t.toFixed(1)} s</h3>
+    <div>Sent <b>${r.ships}</b> ships${pct} <b>${r.source} → ${r.target}</b></div>
+    <div>Best: <b style="color:var(--alt)">${best}</b>${same ? ' <span class="muted">(same target, different size)</span>' : ''}</div>
+    <div class="wpbar">${bar.filter(b => !isNaN(b[1])).map(b => `<span title="${b[0]} ${b[1].toFixed(3)}" style="left:calc(${(b[1] * 100).toFixed(1)}% - 1px);background:${b[2]}"></span>`).join('')}</div>
+    <div class="legend">${bar.filter(b => !isNaN(b[1])).map(b => `<span><i style="background:${b[2]}"></i>${b[0]} ${b[1].toFixed(3)}</span>`).join('')}</div>
+    <div class="kv">
+      ${r.reason ? `<div>Why unclear</div><div>${esc(r.reason)}${r.grade0 !== 'unclear' ? ` <span class="muted">(was ${esc(r.grade0)})</span>` : ''}</div>` : ''}
+      <div>Real send vs holding</div><div>${sign(r.wp_real - r.wp_hold)} <span class="muted">${r.wp_real - r.wp_hold < -0.05 ? 'the send itself did damage' : 'the send itself was about neutral'}</span></div>
+      <div>Best vs holding</div><div>${sign(r.wp_best - r.wp_hold)}${(r.wp_hold - r.wp_real) < 0.05 && r.loss > 0.1 ? ' <span class="muted">missed chance, not a harmful send</span>' : ''}</div>
+      <div>Sim vs reality</div><div>${fmt(r.simErr)} <span class="muted">(real send: simulated vs actual win prob at the end of the window)</span></div>
+      <div>Win prob lost</div><div><b>${r.loss.toFixed(3)}</b>${isNaN(r.adj_loss) ? '' : ` <span class="muted">(with retake check ${r.adj_loss.toFixed(3)}, ${esc(r.adj_grade)})</span>`}</div>
+      <div>Window</div><div>${r.horizon_s} s after the send (to ${(r.t + r.horizon_s).toFixed(1)} s)</div>
+      <div>Timing sensitivity</div><div>real ${fmt(r.timing_spread_real)} · best ${fmt(r.timing_spread_best)} <span class="muted">(WP swing over ±0.2 s landing)</span></div>
+      <div>Player won game</div><div>${+r.won ? 'yes' : 'no'}</div>
+    </div>`;
+}
+const fmt = v => isNaN(v) ? '–' : v.toFixed(3);
+const sign = v => isNaN(v) ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(3);
+
+// ---------------------------------------------------------------- drawing
+const mapC = $('map'), tlC = $('tl');
+function fitCanvas(c) { const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1; c.width = Math.max(1, r.width * d); c.height = Math.max(1, r.height * d); const ctx = c.getContext('2d'); ctx.setTransform(d, 0, 0, d, 0, 0); return [ctx, r.width, r.height]; }
+function drawMap() {
+  const [ctx, W, H] = fitCanvas(mapC);
+  ctx.fillStyle = '#0b0d11'; ctx.fillRect(0, 0, W, H);
+  if (!G) return;
+  const mw = G.init.w || 520, mh = G.init.h || 360, pad = W < 600 ? 6 : 24;
+  const sc = Math.min((W - 2 * pad) / mw, (H - 2 * pad) / mh);
+  if (!(sc > 0)) return;
+  const ox = (W - mw * sc) / 2, oy = (H - mh * sc) / 2;
+  const X = x => ox + x * sc, Y = y => oy + y * sc;
+  const k = Math.min(tick, G.last), NP = G.NP;
+  // fleets in flight
+  for (const f of G.fleets) {
+    if (k < f.k0 || k > f.kEnd) continue;
+    let dropped = 0; for (const c of f.cum) { if (c.k <= k) dropped = c.acc; else break; }
+    const rem = f.s - dropped; if (rem <= 0.5) continue;
+    let sg = f.segs[0]; for (const s of f.segs) if (s.k <= k) sg = s;
+    const fr = Math.max(0, Math.min(1, (k - sg.k) / (sg.ka - sg.k)));
+    const x = sg.sx + (sg.ex - sg.sx) * fr, y = sg.sy + (sg.ey - sg.sy) * fr;
+    ctx.strokeStyle = G.col(f.o) + '55'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(x), Y(y)); ctx.lineTo(X(sg.ex), Y(sg.ey)); ctx.stroke();
+    ctx.fillStyle = G.col(f.o); ctx.beginPath(); ctx.arc(X(x), Y(y), Math.max(2.5, Math.sqrt(rem) * 0.9 * sc / 1.4), 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center'; ctx.fillText(Math.round(rem), X(x), Y(y) - 6);
+  }
+  // planets
+  for (let i = 0; i < NP; i++) {
+    const p = G.P[i], o = G.own[k * NP + i], s = G.ships[k * NP + i];
+    ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), p.r * sc, 0, 7);
+    ctx.fillStyle = G.col(o) + (o === G.NEU ? '55' : 'aa'); ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = G.col(o); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(10, Math.min(14, p.r * sc * 0.6))}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(Math.max(0, Math.round(s)), X(p.x), Y(p.y));
+    if ($('showIds').checked) { ctx.fillStyle = '#8b93a7'; ctx.font = '10px sans-serif'; ctx.fillText('#' + p.n + ' · ' + p.prod, X(p.x), Y(p.y) + p.r * sc + 9); }
+  }
+  ctx.textBaseline = 'alphabetic';
+  // selected send: real arrow + best alternative
+  const r = viewRows[selIdx];
+  if (r && k >= r.k && k <= r.k + Math.round(r.horizon_s * 10)) {
+    const s = G.P[r.srcI];
+    const arrow = (ti, color, label, dash) => {
+      const t = G.P[ti]; const d = Math.hypot(t.x - s.x, t.y - s.y) || 1, ux = (t.x - s.x) / d, uy = (t.y - s.y) / d;
+      const x0 = X(s.x + ux * s.r), y0 = Y(s.y + uy * s.r), x1 = X(t.x - ux * (t.r + 3)), y1 = Y(t.y - uy * (t.r + 3));
+      ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3; ctx.setLineDash(dash ? [7, 5] : []);
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); ctx.setLineDash([]);
+      const a = Math.atan2(y1 - y0, x1 - x0); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 11 * Math.cos(a - 0.4), y1 - 11 * Math.sin(a - 0.4)); ctx.lineTo(x1 - 11 * Math.cos(a + 0.4), y1 - 11 * Math.sin(a + 0.4)); ctx.fill();
+      ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      ctx.lineWidth = 4; ctx.strokeStyle = '#0b0d11'; ctx.strokeText(label, mx, my - 6); ctx.fillText(label, mx, my - 6); ctx.restore();
+    };
+    ctx.beginPath(); ctx.arc(X(s.x), Y(s.y), s.r * sc + 5, 0, 7); ctx.strokeStyle = GCOL[r.grade]; ctx.lineWidth = 2; ctx.stroke();
+    const tag = txt => { ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = '#0b0d11'; ctx.strokeText(txt, X(s.x), Y(s.y) - s.r * sc - 10); ctx.fillStyle = '#7ee08a'; ctx.fillText(txt, X(s.x), Y(s.y) - s.r * sc - 10); };
+    const sameTarget = r.bestI === r.tgI;
+    if (r.bestI >= 0 && !sameTarget) arrow(r.bestI, '#7ee08a', `best: ${r.bestShips}`, true);
+    if (r.bestI < 0) tag('best: hold');
+    else if (sameTarget && r.bestShips !== r.ships) tag(`best: ${r.bestShips} to the same target`);
+    if (r.tgI !== undefined) arrow(r.tgI, GCOL[r.grade], `${r.ships}`, false);
+  }
+  if (!G.rows.length) { ctx.fillStyle = '#f04a4a'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(GRADEROWS.length ? 'No graded sends for this game in the grades file' : 'Load grade_moves_decisions.csv to see the grades', W / 2, H - 12); }
+  ctx.fillStyle = '#8b93a7'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(`${G.init.player_name} vs ${G.init.enemy_name} · win prob ${G.init.player_name} ${G.wp[k].toFixed(3)}`, 8, 14);
+}
+function drawTimeline() {
+  const [ctx, W, H] = fitCanvas(tlC);
+  ctx.fillStyle = '#12151b'; ctx.fillRect(0, 0, W, H);
+  if (!G) return;
+  const L = 8, Rr = W - 8, x = k => L + (Rr - L) * k / Math.max(1, G.last);
+  const rowY = [16, 34], wpTop = 50, wpBot = H - 14;
+  // rows
+  ctx.font = '10px sans-serif'; ctx.fillStyle = '#8b93a7'; ctx.textAlign = 'left';
+  [G.init.player_name, G.init.enemy_name].forEach((nm, i) => { ctx.fillStyle = G.col(i ? G.init.enemy_n : G.init.player_n); ctx.fillRect(L, rowY[i] - 8, 3, 12); });
+  // win prob line
+  ctx.strokeStyle = '#2a2f3a'; ctx.beginPath(); ctx.moveTo(L, (wpTop + wpBot) / 2); ctx.lineTo(Rr, (wpTop + wpBot) / 2); ctx.stroke();
+  ctx.strokeStyle = G.col(G.init.player_n); ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let k = 0; k <= G.last; k++) { const yy = wpBot - (wpBot - wpTop) * G.wp[k]; k ? ctx.lineTo(x(k), yy) : ctx.moveTo(x(k), yy); }
+  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillStyle = '#8b93a7'; ctx.fillText(`win prob ${G.init.player_name}`, L + 6, wpTop + 9);
+  // graded sends (all grades faint; filtered ones bright)
+  const gs = activeGrades(), pl = $('playerSel').value;
+  for (const r of G.rows) {
+    const on = gs.has(r.grade) && (!pl || r.player === pl);
+    ctx.fillStyle = GCOL[r.grade] + (on ? '' : '33');
+    const h = on ? 12 : 6; ctx.fillRect(x(r.k) - 1, rowY[r.side] - h / 2 - 2, on ? 3 : 2, h);
+  }
+  // selection window + cursor
+  const r = viewRows[selIdx];
+  if (r) { ctx.fillStyle = '#ffffff14'; ctx.fillRect(x(r.k), 4, x(r.k + Math.round(r.horizon_s * 10)) - x(r.k), H - 8); }
+  ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x(tick), 2); ctx.lineTo(x(tick), H - 2); ctx.stroke();
+  ctx.fillStyle = '#8b93a7'; for (let s = 0; s <= G.last / 10; s += (G.last > 1200 ? 20 : 10)) ctx.fillText(s + 's', x(s * 10) - 6, H - 2);
+}
+tlC.onclick = e => {
+  if (!G) return; const rc = tlC.getBoundingClientRect(), px = e.clientX - rc.left, py = e.clientY - rc.top;
+  const L = 8, Rr = rc.width - 8, k = Math.round((px - L) / (Rr - L) * G.last);
+  if (py < 44) { // a send row: pick the nearest visible send
+    const side = py < 25 ? 0 : 1; let bi = -1, bd = 1e9;
+    viewRows.forEach((r, i) => { if (r.side !== side) return; const d = Math.abs(r.k - k); if (d < bd) { bd = d; bi = i; } });
+    if (bi >= 0 && bd <= Math.max(3, G.last / 150)) { select(bi); return; }
+  }
+  stop(); setTick(Math.max(0, Math.min(G.last, k)));
+};
+
+// ---------------------------------------------------------------- time
+function setTick(k) { tick = Math.max(0, Math.min(G ? G.last : 0, k)); $('scrub').value = tick; $('clock').textContent = (tick / 10).toFixed(1) + ' s'; drawMap(); drawTimeline(); }
+$('scrub').oninput = e => { stop(); setTick(+e.target.value); };
+function stop() { if (playing) { cancelAnimationFrame(playing.raf); playing = null; $('bPlay').textContent = '▶ play window'; } }
+function play() {
+  if (!G) return; if (playing) { stop(); return; }
+  const r = viewRows[selIdx]; const start = r ? Math.max(0, r.k - 10) : tick, end = r ? Math.min(G.last, r.k + Math.round(r.horizon_s * 10)) : G.last;
+  if (!r || tick >= end || tick < start) setTick(start);
+  let t0 = performance.now(), k0 = tick; $('bPlay').textContent = '❚❚ pause';
+  const step = now => { const k = k0 + Math.floor((now - t0) / 100 * +$('speed').value); setTick(Math.min(k, end)); if (k >= end) { stop(); return; } playing.raf = requestAnimationFrame(step); };
+  playing = { raf: requestAnimationFrame(step) };
+}
+$('bPlay').onclick = play; $('bPrev').onclick = () => select(selIdx - 1); $('bNext').onclick = () => select(selIdx + 1);
+$('showIds').onchange = () => drawMap();
+window.onresize = () => { drawMap(); drawTimeline(); };
+document.addEventListener('keydown', e => {
+  if (!G || e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox')) return;
+  if (e.key === 'ArrowDown') { select(selIdx + 1); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { select(selIdx - 1); e.preventDefault(); }
+  else if (e.key === ' ') { play(); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { stop(); setTick(tick + (e.shiftKey ? 10 : 1)); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { stop(); setTick(tick - (e.shiftKey ? 10 : 1)); e.preventDefault(); }
+});
+if (window.innerWidth < 600) $('showIds').checked = false;
+drawMap(); drawTimeline();
+</script>
+</body>
+</html>

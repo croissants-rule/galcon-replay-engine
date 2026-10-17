@@ -1,6 +1,6 @@
 # Galcon Replay Engine
 
-Galcon 2 Lua mods, a Python recorder/replay viewer, a Discord replay uploader, and ship image assets.
+Galcon 2 Lua mods, Python recorders and analysis tools, HTML replay and move-review tools, Discord uploaders, and ship image assets.
 
 ## Files
 
@@ -14,7 +14,22 @@ Galcon 2 Lua mods, a Python recorder/replay viewer, a Discord replay uploader, a
 - `galcon (28).py`: Existing Python recorder/replay viewer.
 - `ship-*.png`: Existing ship image assets.
 
-The seven uploaded source files retain their supplied names and contents. Their numbered suffixes do not establish which version is newest or which Galcon mod slot should load them.
+The first seven uploaded source files retain their supplied names and contents. Their numbered suffixes do not establish which version is newest or which Galcon mod slot should load them.
+
+## Additional recorders and review tools
+
+- `main.py`: Always-on recorder and Discord uploader for `mod1.bin`, with batch recording and room-stat persistence.
+- `replaybot-2.py`: Discord uploader watching the configured `galcon_recordings` folder.
+- `botreplay-3.py`: Continuous bot-room recorder configured for `mod2.bin`.
+- `analyze_replay-4.py`: Replay trajectory and transit-prediction analysis. Requires `geometry_engine.py`, which is not included in this repository; its supplied `/home/claude` import-path setting is unchanged.
+- `Replay_Viewer_Pro-3-5.html`: HTML Galcon replay viewer.
+- `grade_moves-6.py`: Replay move grading and CSV export. Requires NumPy; its v3/ensemble modes also require an external evaluator JSON file.
+- `Move_Review-2-7.html`: HTML move-review interface.
+- `ring_structure_terrain_aware-28-8.html`: HTML ring-structure map reader.
+
+These eight additional files retain their supplied names. Seven are unchanged; in `main.py`, the hard-coded Discord bot token was removed before committing and replaced with `os.environ["DISCORD_BOT_TOKEN"]`. No original credential was committed. Set that environment variable locally using a newly reset token before starting `main.py`; do not put a token into tracked source or commit shell configuration containing one.
+
+The recorders retain their supplied machine-specific input/output paths. HTML files are stored as source files, not deployed websites. Python syntax was checked without running the scripts, logging into Discord, or uploading replays; end-to-end behavior and analysis accuracy have not been validated.
 
 ## Local recording files
 
