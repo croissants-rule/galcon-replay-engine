@@ -157,7 +157,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);height:100vh;o
 #fsModalScrollArea{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;-webkit-overflow-scrolling:touch}
 #fsModalHalf2.fs-single{display:none}
 #fsModalSplit.fs-single #fsModalHalf1{flex:1 1 100%}
-#fsModalCanvas1,#fsModalCanvas2{width:100%;display:block}
+#fsModalCanvas1,#fsModalCanvas2,.sm-cv{width:100%;display:block}
 .sm-statsbar{display:flex;flex-direction:column;gap:0;background:#080f18;border:1px solid #1a2a3a;
   border-radius:4px;margin-bottom:8px;flex-shrink:0}
 .sm-shared-row{border-bottom:1px solid #16222f}
@@ -180,7 +180,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);height:100vh;o
 .sm-chart-title{font-family:var(--ui);font-size:12px;color:#a0c4d8;text-transform:uppercase;letter-spacing:.06em}
 .sm-chart-split{display:flex;flex-wrap:wrap;gap:12px}
 .sm-chart-half{flex:1 1 260px;min-width:220px}
-.sm-chart-subhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px}
+.sm-chart-subhead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:3px}
 .sm-chart-sublabel{font-family:var(--ui);font-size:11px;font-weight:700;letter-spacing:.03em}
 .sm-tl-legend{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:4px}
 .sm-tl-legend .sm-chart-sublabel{font-size:10.5px}
@@ -1047,7 +1047,8 @@ function renderPlayerBreakdown(rows){
   if(!stats.length){ el.innerHTML=''; return; }
   function av(s,f){ return s[f+'N'] ? s[f]/s[f+'N'] : null; }
   function wp(s){ var d=s.w+s.l; return d? 100*s.w/d : null; }
-  function pcol(k){ return (colorMode==='player'&&batchPlayers[k]) ? batchPlayers[k].color : '#d0e8f8'; }
+  var entCol={}; summaryEntities(rows).forEach(function(e){ entCol[e.key]=e.color; });
+  function pcol(k){ return entCol[k] || '#d0e8f8'; }
   var cols=[
     {k:'name', l:'Player',    v:function(s){return playerName(s.key).toLowerCase();},
       h:function(s){return '<span style="color:'+pcol(s.key)+';font-weight:700">'+_esc(playerName(s.key))+'</span>';}},
@@ -1059,7 +1060,8 @@ function renderPlayerBreakdown(rows){
     {k:'aap',  l:'Avg AAP',   v:function(s){var x=av(s,'aap');return x==null?-1:x;}, h:function(s){return _fmtPct(av(s,'aap'));}},
     {k:'fp',   l:'Avg FP',    v:function(s){var x=av(s,'fp');return x==null?-1:x;}, h:function(s){return _fmtNum(av(s,'fp'),1);}},
     {k:'fe',   l:'Avg FE',    v:function(s){var x=av(s,'fe');return x==null?-1:x;}, h:function(s){return _fmtNum(av(s,'fe'),2);}},
-    {k:'cap',  l:'Captures/g',v:function(s){return av(s,'cap')||0;}, h:function(s){return _fmtNum(av(s,'cap'),1);}}
+    {k:'cap',  l:'Captures/g',v:function(s){return av(s,'cap')||0;}, h:function(s){return _fmtNum(av(s,'cap'),1);}},
+    {k:'capt', l:'Captures',  v:function(s){return s.cap;}}
   ];
   var sc=null; cols.forEach(function(c){ if(c.k===_playerSortKey) sc=c; });
   if(sc) stats.sort(function(a,b){ var x=sc.v(a), y=sc.v(b); return x<y?-_playerSortDir:(x>y?_playerSortDir:0); });
@@ -1113,11 +1115,10 @@ function renderSummaryFilterBar(){
   if(!el) return;
   var lbl=filterLabel(), n=batchGames?batchGames.length:0, shown=filteredGameIdx().length;
   el.innerHTML=
-    (lbl ? '<span class="sf-label">Focused on <b>'+_esc(lbl)+'</b> — '+shown+' of '+n+' games · '+
-            _esc(playerName(batchFilter.a))+' is shown as P1 in every chart</span>'+
+    (lbl ? '<span class="sf-label">Focused on <b>'+_esc(lbl)+'</b> — '+shown+' of '+n+' games</span>'+
             '<button class="gm-btn" onclick="setBatchFilter(null,null)">✕ Clear</button>'
          : '<span class="sf-label">'+n+' game'+(n===1?'':'s')+(batchPlayerOrder.length>2?' · '+batchPlayerOrder.length+
-             ' players · the P1/Opponents charts below follow recording slots, so click a player to focus them':'')+'</span>')+
+             ' players · click a player to focus on their games':'')+'</span>')+
     (n>1 ? colorToggleHtml() : '');
 }
 
@@ -1128,6 +1129,7 @@ function computeAllFleetAdvPoints(){
     for(var j=0;j<r.fleetAdvPoints.length;j++){
       var p=r.fleetAdvPoints[j];
       out.push({adv:p.adv, fe:p.fe, fp:p.fp, fpDur:p.fpDur, ships:p.ships, captured:p.captured, player:p.player,
+                key:(p.player===1?r.p1Key:r.p2Key),
                 color:(p.player===1?r.p1Color:r.p2Color), gameIdx:i});
     }
   }
@@ -1176,7 +1178,7 @@ function computeZeroFEPressurePoints(){
       out.push({ships:p.ships, pressure:correctedPressure,
                  shipsFrac: totalShipsAtLanding>0 ? 100*p.ships/totalShipsAtLanding : null,
                  pressureFrac: totalShipsAtLanding>0 ? 100*correctedPressure/totalShipsAtLanding : null,
-                 player:p.player, captured:true,
+                 player:p.player, key:(p.player===1?r.p1Key:r.p2Key), captured:true,
                  color:(p.player===1?r.p1Color:r.p2Color), gameIdx:i});
     }
   }
@@ -1468,48 +1470,21 @@ function renderSummaryScreen(){
   var ok=rows.filter(function(r){return r.ok;});
   var n=ok.length;
   function avg(key){ if(!n) return null; var s=0,c=0; for(var i=0;i<ok.length;i++) if(ok[i][key]!=null){s+=ok[i][key];c++;} return c?s/c:null; }
-  var wins=0;
-  for(var i=0;i<ok.length;i++) if(ok[i].winner===ok[i].p1Name) wins++;
-  var winRate=n?Math.round(wins/n*100):null;
-  var totalCap1=0,totalCap2=0;
-  for(var i=0;i<ok.length;i++){ totalCap1+=ok[i].captures1||0; totalCap2+=ok[i].captures2||0; }
-
   function chip(lbl,val){ return '<div class="sm-stat"><span class="sm-stat-lbl">'+lbl+'</span><span class="sm-stat-val">'+val+'</span></div>'; }
+  var ents=summaryEntities(rows);
 
-  var hdrNames=_resolveHeaderNames(ok);
-  var p1HeaderName=hdrNames.p1Name, p2HeaderName=hdrNames.p2Name, p1HeaderColor=hdrNames.p1Color, p2HeaderColor=hdrNames.p2Color;
-
+  // Shared totals only — per-player numbers live in the Players table above,
+  // and every chart below shows each player separately.
   bar.innerHTML =
-    '<div class="sm-shared-row">'+
+    '<div class="sm-shared-row" style="border-bottom:none">'+
       chip('Games', rows.length + (rows.length!==n?' ('+n+' ok)':'')) +
-      chip('Win Rate', winRate==null?'—':winRate+'%') +
+      chip('Players', ents.length) +
       chip('Avg Duration', _fmtDur(avg('duration'))) +
-    '</div>'+
-    '<div class="sm-player-row">'+
-      '<div class="sm-player-group">'+
-        '<span class="sm-player-header" style="color:'+p1HeaderColor+'">'+p1HeaderName+'</span>'+
-        chip('Avg RAP', _fmtPct(avg('rap1'))) +
-        chip('Avg AAP', _fmtPct(avg('aap1'))) +
-        chip('Avg FP', _fmtNum(avg('fp1'),1)) +
-        chip('Avg FE', _fmtNum(avg('fe1'),2)) +
-        chip('Total Captures', totalCap1) +
-      '</div>'+
-      '<div class="sm-player-group">'+
-        '<span class="sm-player-header" style="color:'+p2HeaderColor+'">'+p2HeaderName+'</span>'+
-        chip('Avg RAP', _fmtPct(avg('rap2'))) +
-        chip('Avg AAP', _fmtPct(avg('aap2'))) +
-        chip('Avg FP', _fmtNum(avg('fp2'),1)) +
-        chip('Avg FE', _fmtNum(avg('fe2'),2)) +
-        chip('Total Captures', totalCap2) +
-      '</div>'+
     '</div>';
 
-  renderFleetAdvCharts(p1HeaderName,p1HeaderColor,p2HeaderName,p2HeaderColor);
-  renderZeroFePressureCharts(p1HeaderName,p1HeaderColor,p2HeaderName,p2HeaderColor);
-  resizeAdvTimelineCanvases();
-  renderAdvantageTimeline(p1HeaderName,p1HeaderColor,p2HeaderName,p2HeaderColor);
-  resizeDiffTimelineCanvas();
-  drawDifferentialChart(p1HeaderName,p2HeaderName);
+  renderFleetAdvCharts(ents);
+  renderZeroFePressureCharts(ents);
+  renderTimelineCharts(ents);
 }
 var _fasResizeTimer=null;
 window.addEventListener('resize', function(){
@@ -4693,16 +4668,6 @@ function _hexA(hex,a){
   return 'rgba('+r+','+g+','+b+','+a+')';
 }
 
-function resizeFleetAdvCanvases(){
-  ['fleetAdvCanvasP1','fleetAdvCanvasP2','fleetPresCanvasP1','fleetPresCanvasP2','fleetPresDurCanvasP1','fleetPresDurCanvasP2'].forEach(function(id){
-    var cv=document.getElementById(id); if(!cv||!cv.parentElement) return;
-    var w=Math.max(180,cv.parentElement.clientWidth-4);
-    var h=Math.min(340,Math.max(180,Math.floor(window.innerHeight*0.32)));
-    if(cv.width!==w) cv.width=w;
-    if(cv.height!==h) cv.height=h;
-  });
-}
-
 // Draws one player's chart into canvasId/countElId. `pts` is that
 // player's full, unfiltered point set. metricCfg picks which field goes
 // on Y and how to treat it: FE is a dimensionless ratio with a 1.0
@@ -4868,125 +4833,296 @@ function _drawFleetAdvChart(canvasId, countElId, pts, fitColor, metricCfg, fulls
   if(fullscreen) fitLine(nonzero, true, '(+outliers) ', mT+24);
 }
 
+// ── Per-player chart entities ────────────────────────────────────────────
+// Every summary chart shows each player as their own entity — one panel
+// (scatter charts) or one line (timelines) per player — instead of a
+// "P1 vs everyone else" split. A player's points/games are the sides they
+// actually played, wherever they sat (P1 or P2) in the recording.
 var FE_METRIC_CFG={key:'fe', label:'FE', unit:'', showBreakeven:true,  maxDegree:6};
 var FP_METRIC_CFG={key:'fp', label:'FP', unit:'', showBreakeven:false, maxDegree:6};
 var FPDUR_METRIC_CFG={key:'fpDur', label:'FPdur', unit:'s', showBreakeven:false, maxDegree:6};
 var PRESSURE_METRIC_CFG={key:'pressure', label:'Pressure', unit:'', xKey:'ships', xZeroRef:false, showBreakeven:false, maxDegree:6};
 var PRESSURE_FRAC_METRIC_CFG={key:'pressureFrac', label:'Pressure%', unit:'%', xKey:'shipsFrac', xZeroRef:false, showBreakeven:false, maxDegree:6};
 
-function renderFleetAdvCharts(p1Name,p1Color,p2Name,p2Color){
-  var all=computeAllFleetAdvPoints();
-  var p1pts=all.filter(function(p){return p.player===1;});
-  var p2pts=all.filter(function(p){return p.player===2;});
+function _rowSide(r, key){ return r.p1Key===key ? 1 : (r.p2Key===key ? 2 : 0); }
 
-  var l1=document.getElementById('fasP1Label'), l2=document.getElementById('fasP2Label');
-  if(l1){ l1.textContent=p1Name; l1.style.color=p1Color; }
-  if(l2){ l2.textContent=p2Name; l2.style.color=p2Color; }
-  var l3=document.getElementById('fpsP1Label'), l4=document.getElementById('fpsP2Label');
-  if(l3){ l3.textContent=p1Name; l3.style.color=p1Color; }
-  if(l4){ l4.textContent=p2Name; l4.style.color=p2Color; }
-  var l5=document.getElementById('fpdP1Label'), l6=document.getElementById('fpdP2Label');
-  if(l5){ l5.textContent=p1Name; l5.style.color=p1Color; }
-  if(l6){ l6.textContent=p2Name; l6.style.color=p2Color; }
-
-  resizeFleetAdvCanvases();
-  _drawFleetAdvChart('fleetAdvCanvasP1','fasP1Count',p1pts,p1Color,FE_METRIC_CFG);
-  _drawFleetAdvChart('fleetAdvCanvasP2','fasP2Count',p2pts,p2Color,FE_METRIC_CFG);
-  _drawFleetAdvChart('fleetPresCanvasP1','fpsP1Count',p1pts,p1Color,FP_METRIC_CFG);
-  _drawFleetAdvChart('fleetPresCanvasP2','fpsP2Count',p2pts,p2Color,FP_METRIC_CFG);
-  _drawFleetAdvChart('fleetPresDurCanvasP1','fpdP1Count',p1pts,p1Color,FPDUR_METRIC_CFG);
-  _drawFleetAdvChart('fleetPresDurCanvasP2','fpdP2Count',p2pts,p2Color,FPDUR_METRIC_CFG);
+// Players present in these rows, focused player first, then most-played.
+function summaryEntities(rows){
+  var present={};
+  rows.forEach(function(r){ if(r.p1Key) present[r.p1Key]=1; if(r.p2Key) present[r.p2Key]=1; });
+  var keys=batchPlayerOrder.filter(function(k){ return present[k]; });
+  if(batchFilter.a && present[batchFilter.a]){
+    keys=[batchFilter.a].concat(keys.filter(function(k){return k!==batchFilter.a;}));
+  }
+  var used={}, ents=[];
+  keys.forEach(function(k){
+    var c=entityColor(k, rows);
+    if(used[c]){   // two players picked the same game color — give the later one a free palette color
+      for(var i=0;i<PLAYER_PALETTE.length;i++){ if(!used[PLAYER_PALETTE[i]]){ c=PLAYER_PALETTE[i]; break; } }
+    }
+    used[c]=1;
+    var games=rows.filter(function(r){ return _rowSide(r,k); }).length;
+    ents.push({key:k, name:playerName(k), color:c, games:games});
+  });
+  return ents;
 }
 
-function resizeZeroFePressureCanvases(){
-  ['zfpCanvasP1','zfpCanvasP2','zfpFracCanvasP1','zfpFracCanvasP2'].forEach(function(id){
+// Per player mode: the fixed player color. Game mode: the color that
+// player used most often across these games.
+function entityColor(key, rows){
+  if(colorMode==='player' && batchPlayers && batchPlayers[key]) return batchPlayers[key].color;
+  var counts={}, best=null;
+  rows.forEach(function(r){
+    var s=_rowSide(r,key); if(!s) return;
+    var c=s===1?r.p1Color:r.p2Color; counts[c]=(counts[c]||0)+1;
+    if(best===null||counts[c]>counts[best]) best=c;
+  });
+  return best || (batchPlayers&&batchPlayers[key] ? batchPlayers[key].color : '#c8d8e8');
+}
+
+function _entityLegendHtml(ents, suffix){
+  return ents.map(function(e){
+    return '<span class="sm-chart-sublabel" style="color:'+e.color+'">'+_esc(e.name)+
+      (suffix?'<span style="color:#4a6080;font-weight:400"> '+suffix(e)+'</span>':'')+'</span>';
+  }).join('');
+}
+
+// One chart half per entity inside `containerId`; returns their element ids.
+function buildChartSplit(containerId, prefix, ents){
+  var el=document.getElementById(containerId); if(!el) return [];
+  var html='', ids=[];
+  ents.forEach(function(e,i){
+    var id={cv:prefix+'Cv'+i, cnt:prefix+'Cnt'+i, lbl:prefix+'Lbl'+i};
+    ids.push(id);
+    html+='<div class="sm-chart-half"><div class="sm-chart-subhead">'+
+      '<span class="sm-chart-sublabel" id="'+id.lbl+'" style="color:'+e.color+'">'+_esc(e.name)+'</span>'+
+      '<span class="sm-chart-count" id="'+id.cnt+'"></span></div>'+
+      '<canvas class="sm-cv" id="'+id.cv+'"></canvas></div>';
+  });
+  el.innerHTML=html;
+  return ids;
+}
+
+function _sizeScatterCanvas(cv, fullscreen){
+  if(!cv||!cv.parentElement) return;
+  var w=Math.max(180,cv.parentElement.clientWidth-4);
+  var h=fullscreen ? Math.max(300,Math.floor(window.innerHeight*0.6))
+                   : Math.min(340,Math.max(180,Math.floor(window.innerHeight*0.32)));
+  if(cv.width!==w) cv.width=w;
+  if(cv.height!==h) cv.height=h;
+}
+
+function renderScatterSet(containerId, prefix, points, cfg, ents, fullscreen){
+  var ids=buildChartSplit(containerId, prefix, ents);
+  ids.forEach(function(id){ _sizeScatterCanvas(document.getElementById(id.cv), fullscreen); });
+  ents.forEach(function(e,i){
+    var pts=points.filter(function(p){ return p.key===e.key; })
+                  .map(function(p){ var q=copyObj(p); q.color=e.color; return q; });
+    _drawFleetAdvChart(ids[i].cv, ids[i].cnt, pts, e.color, cfg, !!fullscreen);
+  });
+}
+
+function renderFleetAdvCharts(ents){
+  var all=computeAllFleetAdvPoints();
+  renderScatterSet('splitFE',  'fe',  all, FE_METRIC_CFG,    ents);
+  renderScatterSet('splitFP',  'fp',  all, FP_METRIC_CFG,    ents);
+  renderScatterSet('splitFPD', 'fpd', all, FPDUR_METRIC_CFG, ents);
+}
+
+function renderZeroFePressureCharts(ents){
+  var all=computeZeroFEPressurePoints();
+  renderScatterSet('splitZFP',  'zfp',  all, PRESSURE_METRIC_CFG,      ents);
+  renderScatterSet('splitZFPF', 'zfpf', all, PRESSURE_FRAC_METRIC_CFG, ents);
+}
+
+// For each entity, at each 1% of normalized game time, across only the
+// games that entity played: % of games they held the advantage (same
+// ship-lead-and-production rule RAP uses), their average VS timer
+// (positive = them ahead), and their average normalized ship and
+// production differential (positive = them ahead).
+function computeEntityTimelines(ents){
+  var rows=computeAllGameSummaries().filter(function(r){return r.ok && r.summary && r.summary.length && r.duration>0;});
+  var out={};
+  ents.forEach(function(e){
+    var mine=rows.filter(function(r){ return _rowSide(r,e.key); });
+    var adv=[], vt=[], ship=[], prod=[];
+    for(var pct=0; pct<=100; pct++){
+      var held=0, vtS=0, vtN=0, shS=0, shN=0, prS=0, prN=0;
+      mine.forEach(function(r){
+        var side=_rowSide(r,e.key), t=(pct/100)*r.duration;
+        if(_advStateAt(r.summary,t)===side) held++;
+        var vp=_lastAtOrBefore(r.vtSeries,t,'t');
+        if(vp && vp.v!=null){ vtS+=(side===1?vp.v:-vp.v); vtN++; }
+        var pt=_lastAtOrBefore(r.summary,t,'t');
+        if(pt){
+          var me=side===1?pt.ps:pt.es, op=side===1?pt.es:pt.ps;
+          var mp=side===1?pt.pp:pt.ep, opp=side===1?pt.ep:pt.pp;
+          if(me+op>0){ shS+=(me-op)/(me+op); shN++; }
+          if(mp+opp>0){ prS+=(mp-opp)/(mp+opp); prN++; }
+        }
+      });
+      adv.push(mine.length?100*held/mine.length:null);
+      vt.push(vtN?vtS/vtN:null);
+      ship.push(shN?100*shS/shN:null);
+      prod.push(prN?100*prS/prN:null);
+    }
+    out[e.key]={n:mine.length, adv:adv, vt:vt, ship:ship, prod:prod};
+  });
+  return out;
+}
+
+// Generic multi-line chart over 0–100% of game time.
+// series: [{values:[101], color, dash, width}]; mode 'pct' = 0..max%,
+// 'signed' = symmetric around 0 with `unit` on the axis labels.
+function drawMultiLineChart(canvasId, series, mode, unit, emptyText){
+  var cv=document.getElementById(canvasId); if(!cv) return;
+  var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
+  if(!W||!H) return;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#080f18'; ctx.fillRect(0,0,W,H);
+  var mL=42,mR=14,mT=10,mB=22, cW=W-mL-mR, cH=H-mT-mB;
+  var any=series.some(function(s){ return s.values.some(function(v){return v!=null;}); });
+  if(!any){
+    ctx.textAlign='center'; ctx.font='12px sans-serif'; ctx.fillStyle='#4a6080';
+    ctx.fillText(emptyText||'No games loaded yet', W/2, H/2);
+    return;
+  }
+  var maxAbs=0;
+  series.forEach(function(s){ s.values.forEach(function(v){ if(v!=null) maxAbs=Math.max(maxAbs,Math.abs(v)); }); });
+  var lo, hi, ticks;
+  if(mode==='pct'){ lo=0; hi=Math.min(100,Math.max(10,maxAbs)*1.15); ticks=[0,.25,.5,.75,1].map(function(f){return f*hi;}); }
+  else { var rg=Math.max(unit==='%'?5:1, maxAbs*1.2); if(unit==='%') rg=Math.min(100,rg); lo=-rg; hi=rg; ticks=[rg,rg/2,0,-rg/2,-rg]; }
+  function xOf(pct){ return mL+(pct/100)*cW; }
+  function yOf(v){ v=Math.max(lo,Math.min(hi,v)); return mT+cH-((v-lo)/(hi-lo))*cH; }
+
+  ctx.font='10px sans-serif'; ctx.textAlign='right';
+  ticks.forEach(function(v){
+    var gy=yOf(v);
+    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
+    ctx.beginPath(); ctx.moveTo(mL,gy); ctx.lineTo(mL+cW,gy); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='#5a7890'; ctx.fillText(v.toFixed(Math.abs(v)<10&&v!==0?1:0)+unit,mL-6,gy+3);
+  });
+  ctx.textAlign='center';
+  for(var g=0;g<=4;g++){
+    var xv=g*25, gx=xOf(xv);
+    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
+    ctx.beginPath(); ctx.moveTo(gx,mT); ctx.lineTo(gx,mT+cH); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='#5a7890'; ctx.fillText(xv+'%',gx,mT+cH+14);
+  }
+  if(mode!=='pct'){
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1; ctx.setLineDash([5,4]);
+    ctx.beginPath(); ctx.moveTo(mL,yOf(0)); ctx.lineTo(mL+cW,yOf(0)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  series.forEach(function(s){
+    ctx.strokeStyle=s.color; ctx.lineWidth=s.width||2.25; ctx.setLineDash(s.dash||[]);
+    ctx.beginPath();
+    var started=false;
+    for(var i=0;i<s.values.length;i++){
+      if(s.values[i]==null){ started=false; continue; }   // break rather than interpolate across a real gap
+      var x=xOf(i), y=yOf(s.values[i]);
+      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  });
+  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+cH); ctx.lineTo(mL+cW,mT+cH); ctx.stroke();
+}
+
+function resizeAdvTimelineCanvases(){
+  ['advLinesCanvas','advVtCanvas'].forEach(function(id){
     var cv=document.getElementById(id); if(!cv||!cv.parentElement) return;
-    var w=Math.max(180,cv.parentElement.clientWidth-4);
-    var h=Math.min(340,Math.max(180,Math.floor(window.innerHeight*0.32)));
+    var w=Math.max(240,cv.parentElement.clientWidth-4);
+    var h=Math.min(240,Math.max(140,Math.floor(window.innerHeight*0.22)));
     if(cv.width!==w) cv.width=w;
     if(cv.height!==h) cv.height=h;
   });
 }
 
-function renderZeroFePressureCharts(p1Name,p1Color,p2Name,p2Color){
-  var all=computeZeroFEPressurePoints();
-  var p1pts=all.filter(function(p){return p.player===1;});
-  var p2pts=all.filter(function(p){return p.player===2;});
-  var l1=document.getElementById('zfpP1Label'), l2=document.getElementById('zfpP2Label');
-  if(l1){ l1.textContent=p1Name; l1.style.color=p1Color; }
-  if(l2){ l2.textContent=p2Name; l2.style.color=p2Color; }
-  var l3=document.getElementById('zfpFracP1Label'), l4=document.getElementById('zfpFracP2Label');
-  if(l3){ l3.textContent=p1Name; l3.style.color=p1Color; }
-  if(l4){ l4.textContent=p2Name; l4.style.color=p2Color; }
-  resizeZeroFePressureCanvases();
-  _drawFleetAdvChart('zfpCanvasP1','zfpP1Count',p1pts,p1Color,PRESSURE_METRIC_CFG);
-  _drawFleetAdvChart('zfpCanvasP2','zfpP2Count',p2pts,p2Color,PRESSURE_METRIC_CFG);
-  _drawFleetAdvChart('zfpFracCanvasP1','zfpFracP1Count',p1pts,p1Color,PRESSURE_FRAC_METRIC_CFG);
-  _drawFleetAdvChart('zfpFracCanvasP2','zfpFracP2Count',p2pts,p2Color,PRESSURE_FRAC_METRIC_CFG);
+function resizeDiffTimelineCanvas(){
+  var cv=document.getElementById('diffTimelineCanvas'); if(!cv||!cv.parentElement) return;
+  var w=Math.max(240,cv.parentElement.clientWidth-4);
+  var h=Math.min(260,Math.max(160,Math.floor(window.innerHeight*0.24)));
+  if(cv.width!==w) cv.width=w;
+  if(cv.height!==h) cv.height=h;
+}
+
+function _gamesSuffix(e){ return '('+e.games+' game'+(e.games===1?'':'s')+')'; }
+
+function drawAdvantageLines(tl, ents, canvasId, legendId, countElId){
+  var leg=document.getElementById(legendId); if(leg) leg.innerHTML=_entityLegendHtml(ents,_gamesSuffix);
+  var cnt=document.getElementById(countElId);
+  if(cnt){ var n=computeAllGameSummaries().length; cnt.textContent=n+' game'+(n===1?'':'s'); }
+  drawMultiLineChart(canvasId, ents.map(function(e){ return {values:tl[e.key].adv, color:e.color, width:2.5}; }), 'pct', '%');
+}
+
+function drawVtPanel(tl, ents, canvasId, legendId){
+  var leg=document.getElementById(legendId); if(leg) leg.innerHTML=_entityLegendHtml(ents);
+  drawMultiLineChart(canvasId, ents.map(function(e){ return {values:tl[e.key].vt, color:e.color}; }), 'signed', 's',
+                     'No VS-timer values to average');
+}
+
+function drawDifferentialChart(tl, ents, canvasId, legendId, countElId){
+  var leg=document.getElementById(legendId);
+  if(leg) leg.innerHTML=_entityLegendHtml(ents)+
+    '<span class="sm-chart-sublabel" style="color:#7a9cb0;font-weight:400">solid = ships · dashed = production</span>';
+  var cnt=document.getElementById(countElId);
+  if(cnt){ var n=computeAllGameSummaries().length; cnt.textContent=n+' game'+(n===1?'':'s'); }
+  var series=[];
+  ents.forEach(function(e){
+    series.push({values:tl[e.key].prod, color:e.color, dash:[6,4], width:1.75});
+    series.push({values:tl[e.key].ship, color:e.color, width:2.25});
+  });
+  drawMultiLineChart(canvasId, series, 'signed', '%');
+}
+
+function renderTimelineCharts(ents){
+  var tl=computeEntityTimelines(ents);
+  resizeAdvTimelineCanvases();
+  drawAdvantageLines(tl, ents, 'advLinesCanvas', 'advTlLegend', 'advTimelineCount');
+  drawVtPanel(tl, ents, 'advVtCanvas', 'advVtLegend');
+  resizeDiffTimelineCanvas();
+  drawDifferentialChart(tl, ents, 'diffTimelineCanvas', 'diffLegend', 'diffTimelineCount');
 }
 
 // ── Fullscreen chart modal — shared by every graph on the summary page ────
 var _fsCurrentKind=null;
 
-function resizeFsModalCanvases(){
-  var single=document.getElementById('fsModalSplit').classList.contains('fs-single');
-  ['fsModalCanvas1','fsModalCanvas2'].forEach(function(id,idx){
-    if(single && idx===1) return;
-    var cv=document.getElementById(id); if(!cv||!cv.parentElement) return;
-    var w=Math.max(240,cv.parentElement.clientWidth-4);
-    var h=Math.max(300,Math.floor(window.innerHeight*0.6));
-    if(cv.width!==w) cv.width=w;
-    if(cv.height!==h) cv.height=h;
-  });
-}
-
 function _renderFsChart(kind){
-  var hdr=_resolveHeaderNames(computeAllGameSummaries().filter(function(r){return r.ok;}));
+  var rows=computeAllGameSummaries(), ents=summaryEntities(rows);
   var titleEl=document.getElementById('fsModalTitle');
-  var splitEl=document.getElementById('fsModalSplit'), half2El=document.getElementById('fsModalHalf2');
   var legendEl=document.getElementById('fsModalLegend'), capEl=document.getElementById('fsModalCaption');
-  var l1=document.getElementById('fsModalLabel1'), l2=document.getElementById('fsModalLabel2');
+  var splitEl=document.getElementById('fsModalSplit');
 
   if(kind==='fe'||kind==='fp'||kind==='zfp'){
-    splitEl.classList.remove('fs-single'); half2El.classList.remove('fs-single');
     var cfg = kind==='fe'?FE_METRIC_CFG : kind==='fp'?FP_METRIC_CFG : PRESSURE_METRIC_CFG;
     var all = kind==='zfp' ? computeZeroFEPressurePoints() : computeAllFleetAdvPoints();
-    var p1pts=all.filter(function(p){return p.player===1;});
-    var p2pts=all.filter(function(p){return p.player===2;});
     titleEl.textContent = kind==='fe' ? 'Ship advantage @ crossing vs. FE — fullscreen' :
                            kind==='fp' ? 'Ship advantage @ crossing vs. FP (ship-seconds) — fullscreen' :
                            'Failed fleets: fleet size vs. pressure before landing — fullscreen';
     legendEl.innerHTML='<span class="sm-chart-sublabel">Solid line: fit excluding outliers</span>'+
                         '<span class="sm-chart-sublabel" style="color:#c8d8e8">Dotted line: fit including outliers</span>';
     capEl.textContent='Hollow circles are the outliers the normal view hides. Compare how far apart the two fit lines are to see how much the outliers actually move it.';
-    l1.textContent=hdr.p1Name; l1.style.color=hdr.p1Color;
-    l2.textContent=hdr.p2Name; l2.style.color=hdr.p2Color;
-    resizeFsModalCanvases();
-    _drawFleetAdvChart('fsModalCanvas1','fsModalCount1',p1pts,hdr.p1Color,cfg,true);
-    _drawFleetAdvChart('fsModalCanvas2','fsModalCount2',p2pts,hdr.p2Color,cfg,true);
+    renderScatterSet('fsModalSplit', 'fsm', all, cfg, ents, true);
     return;
   }
 
-  splitEl.classList.add('fs-single'); half2El.classList.add('fs-single');
-  l1.textContent='';
-  resizeFsModalCanvases();
+  splitEl.innerHTML='<div class="sm-chart-half" style="flex:1 1 100%"><canvas class="sm-cv" id="fsModalCanvas1"></canvas></div>';
+  var cv=document.getElementById('fsModalCanvas1');
+  cv.width=Math.max(240,cv.parentElement.clientWidth-4);
+  cv.height=Math.max(300,Math.floor(window.innerHeight*0.6));
+  var tl=computeEntityTimelines(ents);
   if(kind==='adv'){
     titleEl.textContent='Who has the advantage — fullscreen';
-    legendEl.innerHTML='<span class="sm-chart-sublabel" style="color:'+hdr.p1Color+'">'+hdr.p1Name+'</span>'+
-                        '<span class="sm-chart-sublabel" style="color:'+hdr.p2Color+'">'+hdr.p2Name+'</span>';
-    capEl.textContent='Each line: % of loaded games where that player holds the advantage, at this point in the match. Read by height — neither line needs to reach 100%; the gap underneath is games that are split/VS-timer at that point.';
-    var advData=computeAdvantageTimeline();
-    drawAdvantageLines(advData,hdr.p1Name,hdr.p1Color,hdr.p2Name,hdr.p2Color,'fsModalCanvas1','fsModalCount1');
+    capEl.textContent='Each line: of the games that player played, the % where they hold the advantage at this point in the match.';
+    drawAdvantageLines(tl, ents, 'fsModalCanvas1', 'fsModalLegend', null);
   } else if(kind==='vt'){
     titleEl.textContent='Average VS timer — fullscreen';
-    legendEl.innerHTML='<span class="sm-chart-sublabel" style="color:#ffcc44">Avg VS timer</span>';
-    var vtData=computeAdvantageTimeline();
-    drawVtPanel(vtData,hdr.p1Name,hdr.p2Name,'fsModalCanvas1','fsModalCaption'); // sets its own caption
+    capEl.textContent='Each line: that player’s average VS timer across their games — positive means they are (or will be) ahead.';
+    drawVtPanel(tl, ents, 'fsModalCanvas1', 'fsModalLegend');
   } else if(kind==='diff'){
     titleEl.textContent='Normalized ship & production differential — fullscreen';
-    legendEl.innerHTML='<span class="sm-chart-sublabel" style="color:#44ccff">Ship differential</span>'+
-                        '<span class="sm-chart-sublabel" style="color:#ffcc44">Production differential</span>';
-    drawDifferentialChart(hdr.p1Name,hdr.p2Name,'fsModalCanvas1','fsModalCount1','fsModalCaption'); // sets its own caption
+    capEl.textContent='(Them − opponent) / (Them + opponent), averaged across each player’s games — positive means that player is ahead.';
+    drawDifferentialChart(tl, ents, 'fsModalCanvas1', 'fsModalLegend', null);
   }
 }
 
@@ -5005,229 +5141,6 @@ window.addEventListener('resize', function(){
   clearTimeout(_fsResizeTimer);
   _fsResizeTimer=setTimeout(function(){ _renderFsChart(_fsCurrentKind); }, 120);
 });
-
-function resizeAdvTimelineCanvases(){
-  ['advLinesCanvas','advVtCanvas'].forEach(function(id){
-    var cv=document.getElementById(id); if(!cv||!cv.parentElement) return;
-    var w=Math.max(240,cv.parentElement.clientWidth-4);
-    var h=Math.min(240,Math.max(140,Math.floor(window.innerHeight*0.22)));
-    if(cv.width!==w) cv.width=w;
-    if(cv.height!==h) cv.height=h;
-  });
-}
-
-// Panel A: three plain, directly comparable % lines (P1-advantage,
-// P2-advantage, neutral/VS-timer) on one ordinary 0-100% axis — no
-// stacking, no secondary axis. Whichever line is physically highest at a
-// given x is the most common state across loaded games at that point in
-// the match. Chosen specifically because the previous stacked-area +
-// dual-axis version required decoding band thickness and a second scale
-// to read, which wasn't landing.
-function drawAdvantageLines(data,p1Name,p1Color,p2Name,p2Color,canvasId,countElId){
-  canvasId=canvasId||'advLinesCanvas'; countElId=countElId||'advTimelineCount';
-  var l1=document.getElementById('advTlP1Label'), l2=document.getElementById('advTlP2Label');
-  if(l1){ l1.textContent=p1Name; l1.style.color=p1Color; }
-  if(l2){ l2.textContent=p2Name; l2.style.color=p2Color; }
-
-  var cv=document.getElementById(canvasId); if(!cv) return;
-  var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
-  if(!W||!H) return;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#080f18'; ctx.fillRect(0,0,W,H);
-  var mL=38,mR=14,mT=10,mB=22, cW=W-mL-mR, cH=H-mT-mB;
-
-  var nGames=data.length?data[0].n:0;
-  var countEl=document.getElementById(countElId);
-  if(countEl) countEl.textContent=nGames+' game'+(nGames===1?'':'s');
-  if(!nGames){
-    ctx.textAlign='center'; ctx.font='12px sans-serif'; ctx.fillStyle='#4a6080';
-    ctx.fillText('No games loaded yet', W/2, H/2);
-    return;
-  }
-
-  // 0% stays a fixed, meaningful floor (it's not an arbitrary crop — "no
-  // games" is a real state), but the ceiling zooms to whatever the data
-  // actually reaches instead of always assuming the full 0-100% range.
-  var maxPct=10;
-  for(var di=0;di<data.length;di++){
-    if(data[di].p1pct>maxPct) maxPct=data[di].p1pct;
-    if(data[di].p2pct>maxPct) maxPct=data[di].p2pct;
-  }
-  maxPct=Math.min(100,maxPct*1.15);
-
-  function xOf(pct){ return mL+(pct/100)*cW; }
-  function yOf(v){ return mT+cH-(Math.max(0,Math.min(maxPct,v))/maxPct)*cH; }
-
-  ctx.font='10px sans-serif'; ctx.textAlign='right';
-  for(var g=0;g<=4;g++){
-    var pv=(g/4)*maxPct, gy=yOf(pv);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(mL,gy); ctx.lineTo(mL+cW,gy); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(pv.toFixed(pv<10?1:0)+'%',mL-6,gy+3);
-  }
-  ctx.textAlign='center';
-  for(var g2=0;g2<=4;g2++){
-    var xv=g2*25, gx=xOf(xv);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(gx,mT); ctx.lineTo(gx,mT+cH); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(xv+'%',gx,mT+cH+14);
-  }
-
-  function drawLine(field,color,width){
-    ctx.strokeStyle=color; ctx.lineWidth=width; ctx.setLineDash([]);
-    ctx.beginPath();
-    for(var i=0;i<data.length;i++){ var x=xOf(data[i].pct), y=yOf(data[i][field]); if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); }
-    ctx.stroke();
-  }
-  drawLine('p2pct',p2Color,2.5);
-  drawLine('p1pct',p1Color,2.5);
-
-  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+cH); ctx.lineTo(mL+cW,mT+cH); ctx.stroke();
-}
-
-// Panel B: avg VT gets its own full-height chart instead of a cramped
-// secondary axis shared with the % lines above — same data, easier read.
-function drawVtPanel(data,p1Name,p2Name,canvasId,captionElId){
-  canvasId=canvasId||'advVtCanvas'; captionElId=captionElId||'advVtCaption';
-  var cv=document.getElementById(canvasId); if(!cv) return;
-  var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
-  if(!W||!H) return;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#080f18'; ctx.fillRect(0,0,W,H);
-  var mL=38,mR=14,mT=10,mB=22, cW=W-mL-mR, cH=H-mT-mB;
-
-  var capEl=document.getElementById(captionElId);
-  if(capEl) capEl.textContent='Positive favors '+p1Name+', negative favors '+p2Name+'. Breaks where every loaded game happens to be in a clean-advantage state at that point (no VT value to average there).';
-
-  if(!data.length || !data[0].n){
-    ctx.textAlign='center'; ctx.font='12px sans-serif'; ctx.fillStyle='#4a6080';
-    ctx.fillText('No games loaded yet', W/2, H/2);
-    return;
-  }
-
-  function xOf(pct){ return mL+(pct/100)*cW; }
-  var maxVT=1;
-  for(var i=0;i<data.length;i++){ if(data[i].avgVT!=null && Math.abs(data[i].avgVT)>maxVT) maxVT=Math.abs(data[i].avgVT); }
-  maxVT*=1.15;
-  function yOf(v){ return mT+cH/2-(v/maxVT)*(cH/2); }
-
-  ctx.font='10px sans-serif'; ctx.textAlign='right';
-  [maxVT, maxVT/2, 0, -maxVT/2, -maxVT].forEach(function(v){
-    var gy=yOf(v);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(mL,gy); ctx.lineTo(mL+cW,gy); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(v.toFixed(0)+'s',mL-6,gy+3);
-  });
-  ctx.textAlign='center';
-  for(var g2=0;g2<=4;g2++){
-    var xv=g2*25, gx=xOf(xv);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(gx,mT); ctx.lineTo(gx,mT+cH); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(xv+'%',gx,mT+cH+14);
-  }
-
-  ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1; ctx.setLineDash([5,4]);
-  ctx.beginPath(); ctx.moveTo(mL,yOf(0)); ctx.lineTo(mL+cW,yOf(0)); ctx.stroke(); ctx.setLineDash([]);
-
-  ctx.strokeStyle='#ffcc44'; ctx.lineWidth=2.25; ctx.setLineDash([]);
-  ctx.beginPath();
-  var started=false;
-  for(var i3=0;i3<data.length;i3++){
-    if(data[i3].avgVT==null){ started=false; continue; }
-    var x3=xOf(data[i3].pct), y3=yOf(data[i3].avgVT);
-    if(!started){ ctx.moveTo(x3,y3); started=true; } else ctx.lineTo(x3,y3);
-  }
-  ctx.stroke();
-
-  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+cH); ctx.lineTo(mL+cW,mT+cH); ctx.stroke();
-}
-
-function renderAdvantageTimeline(p1Name,p1Color,p2Name,p2Color){
-  var data=computeAdvantageTimeline();
-  drawAdvantageLines(data,p1Name,p1Color,p2Name,p2Color);
-  drawVtPanel(data,p1Name,p2Name);
-}
-
-function resizeDiffTimelineCanvas(){
-  var cv=document.getElementById('diffTimelineCanvas'); if(!cv||!cv.parentElement) return;
-  var w=Math.max(240,cv.parentElement.clientWidth-4);
-  var h=Math.min(260,Math.max(160,Math.floor(window.innerHeight*0.24)));
-  if(cv.width!==w) cv.width=w;
-  if(cv.height!==h) cv.height=h;
-}
-
-// Ship diff and production diff share one chart — both are already on the
-// same bounded ±100% scale (unlike VT, which needed its own axis), and
-// showing them together directly answers "is the production lead running
-// ahead of or behind the ship-count lead," which neither line shows on
-// its own.
-function drawDifferentialChart(p1Name,p2Name,canvasId,countElId,captionElId){
-  canvasId=canvasId||'diffTimelineCanvas'; countElId=countElId||'diffTimelineCount'; captionElId=captionElId||'diffTimelineCaption';
-  var capEl=document.getElementById(captionElId);
-  if(capEl) capEl.textContent='(P1-P2)/(P1+P2), averaged across games — positive leans toward '+p1Name+', negative toward '+p2Name+'. The ratio itself is bounded to \u00B1100% regardless of a game\u2019s absolute scale (so games of very different size stay comparable), but the axis below zooms to whatever range the data actually uses.';
-
-  var cv=document.getElementById(canvasId); if(!cv) return;
-  var ctx=cv.getContext('2d'), W=cv.width, H=cv.height;
-  if(!W||!H) return;
-  ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#080f18'; ctx.fillRect(0,0,W,H);
-  var mL=42,mR=14,mT=10,mB=22, cW=W-mL-mR, cH=H-mT-mB;
-
-  var data=computeDifferentialTimeline();
-  var nGames=data.length?data[0].n:0;
-  var countEl=document.getElementById(countElId);
-  if(countEl) countEl.textContent=nGames+' game'+(nGames===1?'':'s');
-  if(!nGames){
-    ctx.textAlign='center'; ctx.font='12px sans-serif'; ctx.fillStyle='#4a6080';
-    ctx.fillText('No games loaded yet', W/2, H/2);
-    return;
-  }
-
-  var maxAbs=0;
-  for(var di=0;di<data.length;di++){
-    if(data[di].shipDiff!=null) maxAbs=Math.max(maxAbs,Math.abs(data[di].shipDiff));
-    if(data[di].prodDiff!=null) maxAbs=Math.max(maxAbs,Math.abs(data[di].prodDiff));
-  }
-  var range=Math.max(5, maxAbs*1.3); // floor so a near-flat series doesn't collapse the axis; +30% headroom otherwise
-  function xOf(pct){ return mL+(pct/100)*cW; }
-  function yOf(v){ return mT+cH/2-(v/range)*(cH/2); }
-
-  ctx.font='10px sans-serif'; ctx.textAlign='right';
-  [range, range/2, 0, -range/2, -range].forEach(function(v){
-    var gy=yOf(v);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(mL,gy); ctx.lineTo(mL+cW,gy); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(v.toFixed(v<10&&v>-10&&v!==0?1:0)+'%',mL-6,gy+3);
-  });
-  ctx.textAlign='center';
-  for(var g2=0;g2<=4;g2++){
-    var xv=g2*25, gx=xOf(xv);
-    ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([3,4]);
-    ctx.beginPath(); ctx.moveTo(gx,mT); ctx.lineTo(gx,mT+cH); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#5a7890'; ctx.fillText(xv+'%',gx,mT+cH+14);
-  }
-  ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1; ctx.setLineDash([5,4]);
-  ctx.beginPath(); ctx.moveTo(mL,yOf(0)); ctx.lineTo(mL+cW,yOf(0)); ctx.stroke(); ctx.setLineDash([]);
-
-  function drawLine(field,color){
-    ctx.strokeStyle=color; ctx.lineWidth=2.25; ctx.setLineDash([]);
-    ctx.beginPath();
-    var started=false;
-    for(var i=0;i<data.length;i++){
-      if(data[i][field]==null){ started=false; continue; } // break rather than interpolate across a real gap
-      var x=xOf(data[i].pct), y=yOf(data[i][field]);
-      if(!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
-    }
-    ctx.stroke();
-  }
-  drawLine('prodDiff','#ffcc44');
-  drawLine('shipDiff','#44ccff');
-
-  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(mL,mT); ctx.lineTo(mL,mT+cH); ctx.lineTo(mL+cW,mT+cH); ctx.stroke();
-}
 
 function _drawMetricChart(cvId, series, label, mode, isRatio){
   var cv=document.getElementById(cvId); if(!cv) return;
@@ -6467,61 +6380,16 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
       <button class="sm-expand-btn" onclick="exportLedgerCSV()" title="Download every assault (with covariates) as CSV">⬇ CSV</button>
       <button class="sm-expand-btn" onclick="openChartFullscreen('fe')" title="Fullscreen: shows outliers + a second fit curve including them">⛶ Expand</button>
     </div>
-    <div class="sm-chart-split">
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fasP1Label"></span>
-          <span class="sm-chart-count" id="fasP1Count"></span>
-        </div>
-        <canvas id="fleetAdvCanvasP1"></canvas>
-      </div>
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fasP2Label"></span>
-          <span class="sm-chart-count" id="fasP2Count"></span>
-        </div>
-        <canvas id="fleetAdvCanvasP2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="splitFE"></div>
   </div>
   <div id="fleetPresWrap" class="sm-chartwrap">
     <div class="sm-chart-head">
       <span class="sm-chart-title">Ship advantage @ crossing vs. FP (ship-seconds) — every fleet, every game</span>
       <button class="sm-expand-btn" onclick="openChartFullscreen('fp')" title="Fullscreen: shows outliers + a second fit curve including them">⛶ Expand</button>
     </div>
-    <div class="sm-chart-split">
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fpsP1Label"></span>
-          <span class="sm-chart-count" id="fpsP1Count"></span>
-        </div>
-        <canvas id="fleetPresCanvasP1"></canvas>
-      </div>
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fpsP2Label"></span>
-          <span class="sm-chart-count" id="fpsP2Count"></span>
-        </div>
-        <canvas id="fleetPresCanvasP2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="splitFP"></div>
     <div class="sm-tl-caption" style="margin-top:10px">Duration alone (ships x time with the ships factored back out) — compare this to the ship-seconds pair above. If the shape looks similar here, the relationship above is mostly about persistence, not fleet size. If it flattens out here while the ship-seconds one still slopes, fleet size was doing most of the work.</div>
-    <div class="sm-chart-split">
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fpdP1Label"></span>
-          <span class="sm-chart-count" id="fpdP1Count"></span>
-        </div>
-        <canvas id="fleetPresDurCanvasP1"></canvas>
-      </div>
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fpdP2Label"></span>
-          <span class="sm-chart-count" id="fpdP2Count"></span>
-        </div>
-        <canvas id="fleetPresDurCanvasP2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="splitFPD"></div>
   </div>
   <div id="zfpWrap" class="sm-chartwrap">
     <div class="sm-chart-head">
@@ -6529,39 +6397,9 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
       <button class="sm-expand-btn" onclick="openChartFullscreen('zfp')" title="Fullscreen: shows outliers + a second fit curve including them">⛶ Expand</button>
     </div>
     <div class="sm-tl-caption">X = ships in the fleet. Y = that player's own overall enemy-side presence (fpSeries) from OTHER fleets/holds, averaged over the 0.5s right before <b>this fleet landed</b> — not when it crossed the bisector. This fleet's own contribution to that 0.5s window is subtracted out (it was itself in flight the whole time, so it would otherwise partly measure itself). Answers: was this player's board already stretched thin elsewhere right as the attack was about to resolve?</div>
-    <div class="sm-chart-split">
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="zfpP1Label"></span>
-          <span class="sm-chart-count" id="zfpP1Count"></span>
-        </div>
-        <canvas id="zfpCanvasP1"></canvas>
-      </div>
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="zfpP2Label"></span>
-          <span class="sm-chart-count" id="zfpP2Count"></span>
-        </div>
-        <canvas id="zfpCanvasP2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="splitZFP"></div>
     <div class="sm-tl-caption" style="margin-top:10px">Same two axes, both expressed as a % of that player's own total ship count at landing time — "what fraction of my force did I commit" vs "what fraction is already tied up elsewhere." Scale-free, so a player with a big overall economy doesn't automatically show up here just for having more ships everywhere.</div>
-    <div class="sm-chart-split">
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="zfpFracP1Label"></span>
-          <span class="sm-chart-count" id="zfpFracP1Count"></span>
-        </div>
-        <canvas id="zfpFracCanvasP1"></canvas>
-      </div>
-      <div class="sm-chart-half">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="zfpFracP2Label"></span>
-          <span class="sm-chart-count" id="zfpFracP2Count"></span>
-        </div>
-        <canvas id="zfpFracCanvasP2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="splitZFPF"></div>
   </div>
   <div id="advTimelineWrap" class="sm-chartwrap">
     <div class="sm-chart-head">
@@ -6571,17 +6409,15 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
         <button class="sm-expand-btn" onclick="openChartFullscreen('adv')" title="Fullscreen">⛶ Expand</button>
       </span>
     </div>
-    <div class="sm-tl-legend">
-      <span class="sm-chart-sublabel" id="advTlP1Label"></span>
-      <span class="sm-chart-sublabel" id="advTlP2Label"></span>
-    </div>
-    <div class="sm-tl-caption">Each line: % of loaded games where that player holds the advantage, at this point in the match. Read by height — whichever line is on top is more common at that moment. Neither line needs to reach 100%; the gap underneath is games that are split/VS-timer at that point.</div>
+    <div class="sm-tl-legend" id="advTlLegend"></div>
+    <div class="sm-tl-caption">One line per player: of the games that player played, the % where they hold the advantage (ship lead and same-or-better production) at this point in the match.</div>
     <canvas id="advLinesCanvas"></canvas>
-    <div class="sm-tl-legend" style="margin-top:10px">
-      <span class="sm-chart-sublabel" style="color:#ffcc44">Avg VS timer</span>
+    <div class="sm-tl-legend" style="margin-top:10px;align-items:center">
+      <span class="sm-chart-title" style="font-size:11px">Avg VS timer</span>
+      <span id="advVtLegend" style="display:flex;flex-wrap:wrap;gap:14px"></span>
       <button class="sm-expand-btn" onclick="openChartFullscreen('vt')" title="Fullscreen">⛶ Expand</button>
     </div>
-    <div class="sm-tl-caption" id="advVtCaption"></div>
+    <div class="sm-tl-caption" id="advVtCaption">One line per player: their average VS timer across their own games — positive means that player is (or will be) ahead. Breaks where none of their games has a VS-timer value at that point.</div>
     <canvas id="advVtCanvas"></canvas>
   </div>
   <div id="diffTimelineWrap" class="sm-chartwrap">
@@ -6592,11 +6428,8 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
         <button class="sm-expand-btn" onclick="openChartFullscreen('diff')" title="Fullscreen">⛶ Expand</button>
       </span>
     </div>
-    <div class="sm-tl-legend">
-      <span class="sm-chart-sublabel" style="color:#44ccff">Ship differential</span>
-      <span class="sm-chart-sublabel" style="color:#ffcc44">Production differential</span>
-    </div>
-    <div class="sm-tl-caption" id="diffTimelineCaption">(P1-P2)/(P1+P2), averaged across games — bounded to ±100% regardless of a game's absolute scale, so games of very different size stay comparable.</div>
+    <div class="sm-tl-legend" id="diffLegend"></div>
+    <div class="sm-tl-caption" id="diffTimelineCaption">Per player: (them − opponent) / (them + opponent), averaged across that player’s games — positive means they are ahead. Bounded to ±100% regardless of a game's absolute scale, so games of very different size stay comparable.</div>
     <canvas id="diffTimelineCanvas"></canvas>
   </div>
   <div id="summaryTableWrap">
@@ -6617,22 +6450,7 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
   <div id="fsModalScrollArea">
     <div class="sm-tl-legend" id="fsModalLegend"></div>
     <div class="sm-tl-caption" id="fsModalCaption"></div>
-    <div class="sm-chart-split" id="fsModalSplit">
-      <div class="sm-chart-half" id="fsModalHalf1">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fsModalLabel1"></span>
-          <span class="sm-chart-count" id="fsModalCount1"></span>
-        </div>
-        <canvas id="fsModalCanvas1"></canvas>
-      </div>
-      <div class="sm-chart-half" id="fsModalHalf2">
-        <div class="sm-chart-subhead">
-          <span class="sm-chart-sublabel" id="fsModalLabel2"></span>
-          <span class="sm-chart-count" id="fsModalCount2"></span>
-        </div>
-        <canvas id="fsModalCanvas2"></canvas>
-      </div>
-    </div>
+    <div class="sm-chart-split" id="fsModalSplit"></div>
   </div>
 </div>
 
