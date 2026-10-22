@@ -14,7 +14,8 @@ built from every replay in the channel (backfilled once on startup) plus
 each new upload as it is posted.
 
 Install: pip install discord.py
-Run:     DISCORD_BOT_TOKEN=... python3 main.py
+Token:   paste it into PASTE_TOKEN_HERE below (or set DISCORD_BOT_TOKEN)
+Run:     python3 main.py
 Stop:    Ctrl+C
 """
 
@@ -27,7 +28,8 @@ import discord
 # ─────────────────────────────────────────────────────────────────────────────
 BIN_FILE   = "/Users/phillipcall/Library/Application Support/Steam/userdata/1208075763/294160/remote/mod1.bin"
 OUTPUT_DIR = "/Users/phillipcall/PycharmProjects/galconreplay/galcon_recordings"
-BOT_TOKEN  = os.environ.get("DISCORD_BOT_TOKEN", "").strip()   # never paste the token here
+PASTE_TOKEN_HERE = ""   # paste your bot token between the quotes — never commit/upload this file with it filled in
+BOT_TOKEN  = (PASTE_TOKEN_HERE or os.environ.get("DISCORD_BOT_TOKEN", "")).strip()
 CHANNEL_ID = 1515123696099000492   # replays channel: uploads go here, history is indexed from here
 
 PANEL_CHANNEL_ID   = CHANNEL_ID   # where the Replay Browser panel is posted (can be a separate channel)
@@ -1217,7 +1219,7 @@ async def main():
     t.start()
 
     if not BOT_TOKEN or CHANNEL_ID == 0:
-        print("[discord] DISCORD_BOT_TOKEN not set — running recorder only (no uploads, no browser)")
+        print("[discord] no bot token (PASTE_TOKEN_HERE is empty) — running recorder only (no uploads, no browser)")
         while t.is_alive():
             await asyncio.sleep(1)
     else:
