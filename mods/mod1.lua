@@ -2506,9 +2506,31 @@ end
 end
 end
 
+-- Galcon's in-game user objects hand back user_uid as the engine stores
+-- it, which is not guaranteed to be the same Lua type (number vs string)
+-- as the uid on the client's net events. Comparing them with == then fails
+-- silently: the winner's ELO went to a separate STATS entry nobody saw, so
+-- only the loser's rating appeared to move. Always compare with same_uid
+-- and key stats/events by the client uid from client_uid_of.
+function same_uid(a, b)
+    return a ~= nil and b ~= nil and tostring(a) == tostring(b)
+end
+
+function client_uid_of(user)
+    if not user or user.user_uid == nil then return nil end
+    local want = user.user_uid
+    for _, uid in ipairs(GAME.player_uids or {}) do
+        if same_uid(uid, want) then return uid end
+    end
+    for uid, _ in pairs(GAME.clients or {}) do
+        if same_uid(uid, want) then return uid end
+    end
+    return want
+end
+
 function find_user(uid)
     for _, u in ipairs(g2.search("user")) do
-        if u.user_uid == uid then return u end
+        if same_uid(u.user_uid, uid) then return u end
     end
 end
 
@@ -2551,7 +2573,7 @@ function galcon_handle_surrender(uid, reason)
     -- award the game to the first player in G.users.
     local user = nil
     for _, u in ipairs(G.users or {}) do
-        if u.user_uid == uid then
+        if same_uid(u.user_uid, uid) then
             user = u
             break
         end
@@ -2593,14 +2615,14 @@ function galcon_stop(winner_user)
     local winner_info = nil
     if winner_user then
         winner_info = {
-            uid  = winner_user.user_uid,
+            uid  = client_uid_of(winner_user),
             name = winner_user.title_value,
             n    = winner_user.n,
             side = (winner_user.n == rec_player1_n) and "player" or "enemy",
         }
     end
     flush_chunk(true, winner_info)
-    local winner_uid = winner_user and winner_user.user_uid or nil
+    local winner_uid = winner_user and client_uid_of(winner_user) or nil
     if winner_uid and GAME.player_uids then
         local loser_uid = nil
         for _, uid in ipairs(GAME.player_uids) do
@@ -2938,8 +2960,8 @@ rec_player2_n = G.users[2] and G.users[2].n or 0
 reset_recording()
 local p1_name  = G.users[1] and G.users[1].title_value or "Player1"
 local p2_name  = G.users[2] and G.users[2].title_value or "Player2"
-local p1_uid   = G.users[1] and G.users[1].user_uid or ""
-local p2_uid   = G.users[2] and G.users[2].user_uid or ""
+local p1_uid   = (GAME.player_uids and GAME.player_uids[1]) or (G.users[1] and G.users[1].user_uid) or ""
+local p2_uid   = (GAME.player_uids and GAME.player_uids[2]) or (G.users[2] and G.users[2].user_uid) or ""
 local p1_color = "00ff88"
 local p2_color = "ff4455"
 for uid, c in pairs(GAME.clients) do
@@ -3004,7 +3026,7 @@ if G.pending_end then
         G.pending_end = nil
         local winner = nil
         for _, u in ipairs(G.users) do
-            if u.user_uid and u.user_uid ~= leaving_uid then winner = u; break end
+            if u.user_uid ~= nil and not same_uid(u.user_uid, leaving_uid) then winner = u; break end
         end
         local ok, err = pcall(galcon_stop, winner)
         if not ok then
@@ -3105,7 +3127,8 @@ end
 
 function get_player_color(user, fallback)
     if not user then return fallback or "#888888" end
-    local c = GAME.clients and user.user_uid and GAME.clients[user.user_uid]
+    local cu = user and client_uid_of(user)
+    local c = GAME.clients and cu and GAME.clients[cu]
     if c and c.color then return "#" .. int_to_hex(c.color) end
     return fallback or "#888888"
 end
