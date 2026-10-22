@@ -34,7 +34,8 @@ CHANNEL_ID = 1515123696099000492   # replays channel: uploads go here, history i
 
 PANEL_CHANNEL_ID   = CHANNEL_ID   # where the Replay Browser panel is posted (can be a separate channel)
 TIME_LABEL         = "ET"         # game times are shown in this Mac's local time
-MAX_EXPORT_GAMES   = 200          # cap per export
+MAX_EXPORT_GAMES   = 0            # 0 = no cap; big exports are gzipped and split into several files
+STICKY_PANEL       = True         # re-post the browser panel as the newest message after each upload
 READ_OTHER_AUTHORS = False        # True = also index replays posted by people/other bots
                                   # (requires "Message Content Intent" ON in the Developer Portal)
 
@@ -476,23 +477,53 @@ def ids_where(clause="1=1", params=()):
     return [r[0] for r in db().execute(q, params)]
 
 
-def find_player_ids(name):
+def player_uids(name):
+    """Every UID a lobby name has been recorded with."""
+    n = name.strip().lower()
+    return {r[0] for r in db().execute(
+        "SELECT p1_uid FROM games WHERE lower(p1_name)=? AND p1_uid!='' "
+        "UNION SELECT p2_uid FROM games WHERE lower(p2_name)=? AND p2_uid!=''", (n, n))}
+
+
+def player_clause(name):
     """
-    Exact (case-insensitive) name match, widened to every game played by the
-    UIDs that name has used — so renames/alias spellings are still found.
+    SQL matching games a player was in: exact (case-insensitive) name, widened
+    to every UID that name has used — so renames/alias spellings are found too.
     """
     n = name.strip().lower()
-    uids = set()
-    for r in db().execute("SELECT p1_uid AS u FROM games WHERE lower(p1_name)=? AND p1_uid!='' "
-                          "UNION SELECT p2_uid FROM games WHERE lower(p2_name)=? AND p2_uid!=''", (n, n)):
-        uids.add(r[0])
+    uids = player_uids(name)
     clause = "lower(p1_name)=? OR lower(p2_name)=?"
     params = [n, n]
     if uids:
         marks = ",".join("?" * len(uids))
         clause += f" OR p1_uid IN ({marks}) OR p2_uid IN ({marks})"
         params += list(uids) + list(uids)
-    return ids_where(clause, params)
+    return f"({clause})", params
+
+
+def find_player_ids(name):
+    return ids_where(*player_clause(name))
+
+
+def find_h2h_ids(name_a, name_b):
+    """Only games between these two players."""
+    ca, pa = player_clause(name_a)
+    cb, pb = player_clause(name_b)
+    return ids_where(f"{ca} AND {cb}", pa + pb)
+
+
+def opponents_of(name, ids, limit=24):
+    """[(opponent name, games)] for a player's games, most-played first."""
+    n, uids = name.strip().lower(), player_uids(name)
+    counts, shown = {}, {}
+    for r in fetch_games(ids).values():
+        p1_is_me = r['p1_name'].lower() == n or (r['p1_uid'] and r['p1_uid'] in uids)
+        opp = r['p2_name'] if p1_is_me else r['p1_name']
+        key = opp.lower()
+        counts[key] = counts.get(key, 0) + 1
+        shown.setdefault(key, opp)
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:limit]
+    return [(shown[k], c) for k, c in top]
 
 
 def similar_names(name, limit=25):
@@ -511,6 +542,7 @@ intents = discord.Intents.default()
 if READ_OTHER_AUTHORS:
     intents.message_content = True
 dc = discord.Client(intents=intents)
+tree = discord.app_commands.CommandTree(dc)
 upload_queue: asyncio.Queue = None
 BACKFILL_STATE = "not started"
 _started = False
@@ -595,6 +627,13 @@ async def uploader_loop():
                     msg = "🎮 " + label + "`" + fname + "` — too large (" + f"{size_mb:.0f}" + " MB). File saved at:\n" + path
                     await ch.send(content=msg)
 
+            # keep the browser panel at the bottom of the channel
+            if STICKY_PANEL and PANEL_CHANNEL_ID == CHANNEL_ID and upload_queue.empty():
+                try:
+                    await refresh_panel()
+                except Exception as ex:
+                    print(f"[browser] panel refresh failed: {ex}")
+
         except Exception as ex:
             print(f"[discord] upload error: {ex}")
             print(f"[discord] file still saved at: {path}")
@@ -659,7 +698,7 @@ async def load_source_text(row):
 
 async def build_export(ids, label):
     """Selected game ids → list of files to send (each under the size limit)."""
-    if len(ids) > MAX_EXPORT_GAMES:
+    if MAX_EXPORT_GAMES and len(ids) > MAX_EXPORT_GAMES:
         raise ValueError(f"{len(ids)} games selected — the limit is {MAX_EXPORT_GAMES} per export.")
     rows = sorted(fetch_games(ids).values(), key=lambda r: (r['started'], r['id']))  # oldest first
     sources = {}
@@ -719,11 +758,17 @@ def game_option(r, selected):
 
 
 class GameListView(discord.ui.View):
+    """
+    A private, paged list of games with selection and export.
+    If `player` is set, an opponent dropdown narrows the list to one matchup.
+    """
     PAGE = 25
 
-    def __init__(self, title, ids):
+    def __init__(self, title, ids, player=None, opponent=None):
         super().__init__(timeout=900)
         self.title, self.ids, self.page, self.selected = title, ids, 0, set()
+        self.player, self.opponent = player, opponent
+        self.opponents = opponents_of(player, find_player_ids(player)) if player else []
         self.rebuild()
 
     def page_ids(self):
@@ -737,8 +782,24 @@ class GameListView(discord.ui.View):
                 f" · {len(self.selected)} selected\n"
                 f"-# Newest first. Times are {TIME_LABEL}. \"(est.)\" = winner inferred from the end state.")
 
+    async def redraw(self, interaction):
+        self.rebuild()
+        await interaction.response.edit_message(content=self.content(), view=self)
+
+    def set_opponent(self, opponent):
+        self.opponent = opponent
+        if opponent:
+            self.ids = find_h2h_ids(self.player, opponent)
+            self.title = f"{self.player} vs {opponent}"
+        else:
+            self.ids = find_player_ids(self.player)
+            self.title = f"Games with {self.player}"
+        self.page, self.selected = 0, set()
+
     def rebuild(self):
         self.clear_items()
+
+        # row 0 — the games on this page
         rows = fetch_games(self.page_ids())
         opts = [game_option(rows[i], i in self.selected) for i in self.page_ids() if i in rows]
         if opts:
@@ -748,27 +809,51 @@ class GameListView(discord.ui.View):
             async def on_select(interaction, sel=sel):
                 page = set(self.page_ids())
                 self.selected = (self.selected - page) | {int(v) for v in sel.values}
-                self.rebuild()
-                await interaction.response.edit_message(content=self.content(), view=self)
+                await self.redraw(interaction)
             sel.callback = on_select
             self.add_item(sel)
 
-        prev = discord.ui.Button(label="◀ Prev", disabled=self.page == 0, row=1)
-        nxt  = discord.ui.Button(label="Next ▶", disabled=self.page >= self.n_pages() - 1, row=1)
+        # row 1 — opponent filter (player lists only)
+        if self.player and self.opponents:
+            o_opts = [discord.SelectOption(label="All opponents", value="__all__",
+                                           default=self.opponent is None)]
+            o_opts += [discord.SelectOption(label=f"vs {n}"[:100], description=f"{c} game(s)",
+                                            value=n[:100],
+                                            default=bool(self.opponent) and n.lower() == self.opponent.lower())
+                       for n, c in self.opponents]
+            osel = discord.ui.Select(placeholder="Filter by opponent…", options=o_opts, row=1)
+
+            async def on_opp(interaction, osel=osel):
+                v = osel.values[0]
+                self.set_opponent(None if v == "__all__" else v)
+                await self.redraw(interaction)
+            osel.callback = on_opp
+            self.add_item(osel)
+
+        # row 2 — paging and select all
+        prev = discord.ui.Button(label="◀ Prev", disabled=self.page == 0, row=2)
+        nxt  = discord.ui.Button(label="Next ▶", disabled=self.page >= self.n_pages() - 1, row=2)
+        all_on = bool(self.ids) and len(self.selected) == len(self.ids)
+        sel_all = discord.ui.Button(label="Clear selection" if all_on else f"Select all ({len(self.ids)})",
+                                    disabled=not self.ids, row=2)
+
+        # row 3 — export
         exp_sel = discord.ui.Button(label=f"Export selected ({len(self.selected)})",
                                     style=discord.ButtonStyle.primary,
-                                    disabled=not self.selected, row=1)
+                                    disabled=not self.selected, row=3)
         exp_all = discord.ui.Button(label=f"Export all ({len(self.ids)})",
                                     style=discord.ButtonStyle.success,
-                                    disabled=not self.ids, row=1)
+                                    disabled=not self.ids, row=3)
 
         async def on_prev(interaction):
-            self.page -= 1; self.rebuild()
-            await interaction.response.edit_message(content=self.content(), view=self)
+            self.page -= 1; await self.redraw(interaction)
 
         async def on_next(interaction):
-            self.page += 1; self.rebuild()
-            await interaction.response.edit_message(content=self.content(), view=self)
+            self.page += 1; await self.redraw(interaction)
+
+        async def on_sel_all(interaction):
+            self.selected = set() if len(self.selected) == len(self.ids) else set(self.ids)
+            await self.redraw(interaction)
 
         async def on_exp_sel(interaction):
             await export_to_user(interaction, [i for i in self.ids if i in self.selected], self.title)
@@ -776,9 +861,9 @@ class GameListView(discord.ui.View):
         async def on_exp_all(interaction):
             await export_to_user(interaction, list(self.ids), self.title)
 
-        prev.callback, nxt.callback = on_prev, on_next
+        prev.callback, nxt.callback, sel_all.callback = on_prev, on_next, on_sel_all
         exp_sel.callback, exp_all.callback = on_exp_sel, on_exp_all
-        for b in (prev, nxt, exp_sel, exp_all):
+        for b in (prev, nxt, sel_all, exp_sel, exp_all):
             self.add_item(b)
 
 
@@ -787,15 +872,16 @@ async def export_to_user(interaction, ids, label):
     path = None
     try:
         path, files, n = await build_export(ids, label)
-        note = (f"**{n} game(s)** — download now (private messages vanish when Discord reloads), "
-                f"then open in Replay Viewer Pro.")
+        note = (f"**{n} game(s)**" + (f" in {len(files)} files" if len(files) > 1 else "") +
+                " — download now (private messages vanish when Discord reloads), "
+                "then open in Replay Viewer Pro.")
         if any(f.endswith('.gz') for f in files):
-            note += "\n-# Compressed to fit Discord's size limit: double-click the .gz to unzip it first."
-        for i in range(0, len(files), 10):
+            note += "\n-# Compressed to fit Discord's size limit: double-click each .gz to unzip it first."
+        for i in range(0, len(files), 10):       # Discord allows 10 attachments per message
             await interaction.followup.send(
                 content=note if i == 0 else None, ephemeral=True,
                 files=[discord.File(p, filename=os.path.basename(p)) for p in files[i:i + 10]])
-        print(f"[export] {interaction.user} exported {n} game(s): {label}")
+        print(f"[export] {interaction.user} exported {n} game(s) in {len(files)} file(s): {label}")
     except Exception as ex:
         print(f"[export] failed: {ex}")
         await interaction.followup.send(f"Export failed: {ex}", ephemeral=True)
@@ -854,27 +940,40 @@ class DayPickView(discord.ui.View):
             self.add_item(newer); self.add_item(older)
 
 
-async def show_player(interaction, name, edit=False):
-    ids = find_player_ids(name)
-    if ids:
-        view = GameListView(f"Games with {name}", ids)
-        if edit:
-            await interaction.response.edit_message(content=view.content(), view=view)
-        else:
-            await interaction.response.send_message(view.content(), view=view, ephemeral=True)
-        return
-    names = similar_names(name)
-    if names:
-        view = NamePickView(names)
-        text = f"No player named **{name}** exactly. Did you mean:"
-    else:
-        view, text = None, f"No games found for **{name}**. {'' if BACKFILL_STATE == 'done' else empty_index_text()}"
+async def reply(interaction, text, view=None, edit=False):
     if edit:
         await interaction.response.edit_message(content=text, view=view)
     elif view is not None:
         await interaction.response.send_message(text, view=view, ephemeral=True)
     else:
         await interaction.response.send_message(text, ephemeral=True)
+
+
+async def show_player(interaction, name, opponent=None, edit=False):
+    """One player's games, or only their games against `opponent`."""
+    missing = [n for n in (name, opponent) if n and not find_player_ids(n)]
+    if missing:
+        bad = missing[0]
+        names = similar_names(bad)
+        if names and not opponent:
+            await reply(interaction, f"No player named **{bad}** exactly. Did you mean:",
+                        NamePickView(names), edit)
+        elif names:
+            hint = ", ".join(n for n, _ in names[:8])
+            await reply(interaction, f"No player named **{bad}** exactly. Close matches: {hint}", None, edit)
+        else:
+            extra = "" if BACKFILL_STATE == "done" else " " + empty_index_text()
+            await reply(interaction, f"No games found for **{bad}**.{extra}", None, edit)
+        return
+    view = GameListView(f"Games with {name}", find_player_ids(name), player=name)
+    if opponent:
+        view.set_opponent(opponent)
+        view.rebuild()
+        if not view.ids:
+            await reply(interaction, f"**{name}** and **{opponent}** have no recorded games together.",
+                        None, edit)
+            return
+    await reply(interaction, view.content(), view, edit)
 
 
 class NamePickView(discord.ui.View):
@@ -890,16 +989,20 @@ class NamePickView(discord.ui.View):
         self.add_item(sel)
 
 
-class PlayerModal(discord.ui.Modal, title="Find a player's games"):
+class PlayerModal(discord.ui.Modal, title="Find games by player"):
     name = discord.ui.TextInput(label="Lobby username", placeholder="the name used in the Galcon lobby",
                                 max_length=40)
+    opponent = discord.ui.TextInput(label="Opponent (optional — only games between the two)",
+                                    placeholder="leave empty for all of their games",
+                                    max_length=40, required=False)
 
     async def on_submit(self, interaction):
-        await show_player(interaction, str(self.name.value).strip())
+        opp = str(self.opponent.value or "").strip() or None
+        await show_player(interaction, str(self.name.value).strip(), opp)
 
 
 class PanelView(discord.ui.View):
-    """The pinned panel. Persistent: buttons keep working across restarts."""
+    """The browser panel. Persistent: buttons keep working across restarts."""
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -928,30 +1031,53 @@ def panel_embed():
         title="🎮 Replay Browser",
         description=("Find and download replays from this channel.\n\n"
                      "**📅 By date** — every game played on a day\n"
-                     "**👤 By player** — every game a lobby name played in\n"
+                     "**👤 By player** — a player's games, or only two players' games against each other\n"
                      "**🕐 All games** — everything, newest first\n\n"
-                     "Lists are private to you. Select games (or Export all) and the bot sends "
-                     "you one batch file to open in Replay Viewer Pro."),
+                     "Lists are private to you. Select games (or Select all) and Export — the bot sends "
+                     "you a batch file to open in Replay Viewer Pro.\n"
+                     "-# Lost this message? Type **/replays** anywhere in the server."),
         color=0x00ff88)
 
 
-async def ensure_panel():
-    ch = await get_channel(PANEL_CHANNEL_ID)
-    mid, cid = meta_get('panel_message_id'), meta_get('panel_channel_id')
-    if mid and cid and int(cid) == ch.id:
-        try:
-            await ch.fetch_message(int(mid))
-            return
-        except discord.NotFound:
-            pass
-    msg = await ch.send(embed=panel_embed(), view=PanelView())
-    meta_set('panel_message_id', msg.id)
-    meta_set('panel_channel_id', ch.id)
-    try:
-        await msg.pin()
-    except discord.Forbidden:
-        print("[browser] posted panel but couldn't pin it (bot needs Manage Messages) — pin it by hand")
-    print(f"[browser] panel posted in #{ch.name}")
+_panel_lock = asyncio.Lock()
+
+
+async def refresh_panel(force_new=False):
+    """
+    Make sure the panel exists. With STICKY_PANEL, it is re-posted so it is
+    always the newest message in its channel (the old copy is deleted).
+    """
+    async with _panel_lock:
+        ch = await get_channel(PANEL_CHANNEL_ID)
+        mid, cid = meta_get('panel_message_id'), meta_get('panel_channel_id')
+        old = None
+        if mid and cid and int(cid) == ch.id:
+            try:
+                old = await ch.fetch_message(int(mid))
+            except discord.NotFound:
+                old = None
+        if old and not force_new:
+            if not STICKY_PANEL or ch.last_message_id == old.id:
+                return
+        if old:
+            try:
+                await old.delete()
+            except discord.HTTPException:
+                pass
+        msg = await ch.send(embed=panel_embed(), view=PanelView())
+        meta_set('panel_message_id', msg.id)
+        meta_set('panel_channel_id', ch.id)
+        if not STICKY_PANEL:
+            try:
+                await msg.pin()
+            except discord.Forbidden:
+                print("[browser] posted panel but couldn't pin it (bot needs Manage Messages) — pin it by hand")
+        print(f"[browser] panel posted in #{ch.name}")
+
+
+@tree.command(name="replays", description="Open the replay browser (only you see it)")
+async def replays_command(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=panel_embed(), view=PanelView(), ephemeral=True)
 
 
 @dc.event
@@ -963,7 +1089,14 @@ async def on_ready():
     _started = True
     dc.add_view(PanelView())
     try:
-        await ensure_panel()
+        ch = await get_channel(PANEL_CHANNEL_ID)
+        tree.copy_global_to(guild=ch.guild)        # guild sync shows /replays immediately
+        await tree.sync(guild=ch.guild)
+        print("[browser] /replays command ready")
+    except Exception as ex:
+        print(f"[browser] couldn't register /replays: {ex}")
+    try:
+        await refresh_panel()
     except Exception as ex:
         print(f"[browser] panel error: {ex}")
     try:
