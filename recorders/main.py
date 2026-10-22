@@ -66,7 +66,7 @@ def save_stats(stats):
     except Exception as ex:
         print(f"[stats] save error: {ex}")
 
-def calc_elo_change(winner_elo, loser_elo, K=32):
+def calc_elo_change(winner_elo, loser_elo, K=15):
     exp = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
     return max(1, int(K * (1 - exp)))
 
@@ -1324,7 +1324,7 @@ def recorder_thread(loop):
 
                     # Persist game result to room_stats.json
                     try:
-                        warmup = payload.get('warmup', False)
+                        warmup = False   # every game counts for ELO
                         record_result(
                             cur_players.get('p1_uid', ''), cur_players.get('p1_name', ''),
                             cur_players.get('p2_uid', ''), cur_players.get('p2_name', ''),

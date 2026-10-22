@@ -246,7 +246,7 @@ local SKIN_STYLES = {
 }
 
 local DEFAULT_ELO = 1200
-local ELO_K       = 32
+local ELO_K       = 15   -- same as Aphid's SaandCon
 local STATS       = {}   
 
 function ensure_stats(uid, name, color)
@@ -271,7 +271,8 @@ function calc_elo_change(winner_elo, loser_elo)
     return math.max(1, math.floor(ELO_K * (1 - exp)))
 end
 
-function apply_result(winner_uid, loser_uid, is_warmup)
+-- Every finished game with a winner counts for ELO (no ranked/warm-up split).
+function apply_result(winner_uid, loser_uid)
     local ws = ensure_stats(winner_uid)
     local ls = ensure_stats(loser_uid)
     if not ws or not ls then return end
@@ -287,8 +288,6 @@ function apply_result(winner_uid, loser_uid, is_warmup)
     ws.streak = ws.streak >= 0 and ws.streak + 1 or  1
     ls.streak = ls.streak <= 0 and ls.streak - 1 or -1
 
-    if is_warmup then return end  
-
     local delta = calc_elo_change(ws.elo, ls.elo)
     ws.elo = ws.elo + delta
     ls.elo = math.max(100, ls.elo - delta)
@@ -297,10 +296,9 @@ function apply_result(winner_uid, loser_uid, is_warmup)
     table.insert(ls.history, {elo=ls.elo, vs=ws.name, won=false})
 
     net_send("", "message", string.format(
-        "%s +%d ELO (%d)  ·  %s -%d ELO (%d)%s",
+        "%s +%d ELO (%d)  ·  %s -%d ELO (%d)",
         ws.name, delta, ws.elo,
-        ls.name, delta, ls.elo,
-        GAME.warmup_mode and "  [WARMUP -- no ELO]" or ""
+        ls.name, delta, ls.elo
     ))
 end
 
@@ -326,6 +324,54 @@ function elo_text(uid)
     local s = STATS[uid]
     if not s then return "ELO: " .. DEFAULT_ELO end
     return string.format("ELO: %d  %dW-%dL", s.elo, s.wins, s.losses)
+end
+
+-- /elo        -> your own rating
+-- /elo name   -> anyone's rating (exact name first, then partial match)
+function elo_command(uid, query)
+    local target_uid
+    if not query or query == "" then
+        target_uid = uid
+        ensure_stats(uid, GAME.clients[uid] and GAME.clients[uid].name or nil)
+    else
+        local q = query:lower()
+        local partial = {}
+        for ouid, s in pairs(STATS) do
+            local n = tostring(s.name or ""):lower()
+            if n == q then target_uid = ouid; break end
+            if n:find(q, 1, true) then partial[#partial + 1] = ouid end
+        end
+        if not target_uid then
+            if #partial == 1 then
+                target_uid = partial[1]
+            elseif #partial > 1 then
+                local names = {}
+                for i = 1, math.min(6, #partial) do names[#names + 1] = STATS[partial[i]].name end
+                net_send(uid, "message", "Several players match '" .. query .. "': " .. table.concat(names, ", "))
+                return
+            else
+                net_send(uid, "message", "No player named '" .. query .. "' has played here yet.")
+                return
+            end
+        end
+    end
+    local s = STATS[target_uid]
+    if not s then net_send(uid, "message", "No games played yet."); return end
+    local all = {}
+    for ouid, os_ in pairs(STATS) do all[#all + 1] = { uid = ouid, elo = os_.elo } end
+    table.sort(all, function(a, b) return a.elo > b.elo end)
+    local rank = 0
+    for i, x in ipairs(all) do if x.uid == target_uid then rank = i; break end end
+    local streak = ""
+    if (s.streak or 0) >= 2 then streak = "  ·  W" .. s.streak .. " streak"
+    elseif (s.streak or 0) <= -2 then streak = "  ·  L" .. math.abs(s.streak) .. " streak" end
+    local msg = string.format("%s: %d ELO  ·  #%d of %d  ·  %dW-%dL%s",
+        s.name, s.elo, rank, #all, s.wins, s.losses, streak)
+    if target_uid ~= uid and STATS[uid] and STATS[uid].h2h[target_uid] then
+        local h = STATS[uid].h2h[target_uid]
+        msg = msg .. string.format("  ·  you vs them: %dW-%dL", h.w, h.l)
+    end
+    net_send(uid, "message", msg)
 end
 
 -- ── Persistent stats ─────────────────────────────────────────────────────
@@ -1638,7 +1684,7 @@ function build_status_html(client)
 
     -- ── Ranked mode: label + toggle button (clearer than a single ambiguous button) ──
     html = html .. "<tr><td align=center><table><tr>"
-        .. "<td><div font='font-outline:14' color='#44ccff'>Ranked Mode:</div>"
+        .. "<td><div font='font-outline:14' color='#44ccff'>ElimV2 Rotation:</div>"
         .. "<td><input type='button' onclick='/toggle:ranked' value='" .. (GAME.ranked and "ON" or "OFF")
         .. "' class='" .. (GAME.ranked and "ibutton2" or "ibutton1") .. "' width=80/>"
         .. "</table>"
@@ -1656,12 +1702,12 @@ function build_status_html(client)
         -- Ranked: show rotation info, lock settings
         html = html
             .. "<tr><td><p>&nbsp;</p>"
-            .. "<tr><td align=center><b>Ranked Map Rotation (ElimV2):</b>"
+            .. "<tr><td align=center><b>ElimV2 Map Rotation:</b>"
             .. "<tr><td><div font='font-gui2:13'>"
             .. "SaandBuff 50%&nbsp;&nbsp;Stages 16.7%&nbsp;&nbsp;Philbuff 16.7%&nbsp;&nbsp;12p 16.7%"
             .. "</div>"
             .. "<tr><td><p>&nbsp;</p>"
-            .. "<tr><td align=center><i>Disable ranked to change map settings</i>"
+            .. "<tr><td align=center><i>Turn off ElimV2 rotation to change map settings</i>"
     else
         -- Non-ranked: show style selector + SB versions + distance change
         local ms = GAME.map_styles
@@ -1712,12 +1758,6 @@ function build_status_html(client)
     end
 
     html = html
-        .. "<tr><td><p>&nbsp;</p>"
-        -- Warmup / ELO toggle
-        .. "<tr><td align=center>"
-        .. "<input type='button' onclick='/warmup' class='ibutton"
-        .. (GAME.warmup_mode and "2' icon='icon-away' value='WARM-UP (no ELO)" or "1' icon='icon-play' value='RANKED ELO active")
-        .. "' width=200/>"
         .. "<tr><td><p>&nbsp;</p>"
         -- Status buttons
         .. "<tr><td align=center><input type='button' class='ibutton"
@@ -1776,8 +1816,6 @@ function build_profile_html(client)
         ship_html = "<div font='font-outline:13' color='#44ccff'>Ship: ship-"..cur_ship.."</div>"
     end
 
-    local warmup_note = GAME.warmup_mode and
-        "<p><div color='#ffaa44'>WARM-UP -- ELO paused</div></p>" or ""
 
     -- Browsable list of everyone with stats, so any profile is reachable
     -- from here -- not just people you've personally played (H2H).
@@ -1804,7 +1842,6 @@ function build_profile_html(client)
         "<tr><td align=center><p>" ..
             s.wins.."W -- "..s.losses.."L -- "..wpct.."% -- Streak: "..strk_txt ..
         "</p>" ..
-        warmup_note ..
         "<tr><td><p>&nbsp;</p>" ..
         "<tr><td><b>H2H Record</b>" ..
         "<tr><td><table width=300>" ..
@@ -1823,8 +1860,7 @@ function build_ranks_html()
     local sorted={}
     for uid,s in pairs(STATS) do table.insert(sorted,{uid=uid,s=s}) end
     table.sort(sorted,function(a,b) return a.s.elo>b.s.elo end)
-    local mode_lbl=GAME.warmup_mode and "<div color='#ffaa44'>WARM-UP</div>" or "<div color='#44ccff'>RANKED</div>"
-    local out="<table width=340><tr><td><h2>Rankings</h2><tr><td>"..mode_lbl.."<tr><td><p>&nbsp;</p>"
+    local out="<table width=340><tr><td><h2>Rankings</h2><tr><td><div color='#44ccff'>Every game counts -- /elo name in chat</div><tr><td><p>&nbsp;</p>"
     if #sorted==0 then return out.."<tr><td><p>No games yet.</p></table>" end
     local maxE,minE=1400,1000
     for _,e in ipairs(sorted) do
@@ -2234,11 +2270,7 @@ return
 end
 if e.value == "/help"      then switch_window("help");      return end
 if e.value == "/warmup" then
-GAME.warmup_mode = not GAME.warmup_mode
-broadcast_html()
-net_send("", "message", GAME.warmup_mode
-and "WARM-UP MODE ON -- games won't affect ELO"
-or  "RANKED MODE -- ELO active")
+net_send(e.uid, "message", "There's no warm-up mode -- ELO counts for every game.")
 return
 end
 end
@@ -2280,6 +2312,8 @@ clients_assign_colors()
 net_send("", "message", e.name .. " is /away")
 broadcast_html()
 end
+elseif lv == "/elo" or lv:find("^/elo%s") == 1 then
+elo_command(e.uid, (v:gsub("^%s+",""):sub(5):gsub("^%s+",""):gsub("%s+$","")))
 elseif lv == "/who" then
 local msg = "Players: "
 for _, c in pairs(GAME.clients) do
@@ -2384,17 +2418,17 @@ if lv:sub(1,8) == "/toggle:" then
                     set_room_mode(what:sub(6), e.name or "?")
                 elseif what == "ranked" then
                     GAME.ranked = not GAME.ranked
-                    net_send("","message","[RANKED] Ranked " .. (GAME.ranked and "ON - ElimV2 rotation, settings locked." or "OFF - custom map pool active."))
+                    net_send("","message","ElimV2 map rotation " .. (GAME.ranked and "ON - map settings locked." or "OFF - custom map pool active."))
                 elseif what == "distance" then
-                    if GAME.ranked then net_send("","message","Distance Change not available in ranked.") return end
+                    if GAME.ranked then net_send("","message","Distance Change not available with ElimV2 rotation on.") return end
                     GAME.distance_change = not GAME.distance_change
                     net_send("","message","Distance Change: " .. (GAME.distance_change and "ON" or "OFF"))
                 elseif what == "stages" or what == "classic" or what == "philbuff" or what == "12p" or what == "wonk" then
-                    if GAME.ranked then net_send("","message","Settings locked in ranked mode.") return end
+                    if GAME.ranked then net_send("","message","Map settings locked while ElimV2 rotation is on.") return end
                     GAME.map_styles[what] = not GAME.map_styles[what]
                     net_send("","message",what .. ": " .. (GAME.map_styles[what] and "ON" or "OFF"))
                 elseif what == "saandbuff" then
-                    if GAME.ranked then net_send("","message","Settings locked in ranked mode.") return end
+                    if GAME.ranked then net_send("","message","Map settings locked while ElimV2 rotation is on.") return end
                     local all_on = true
                     for v = 1, 13 do if not GAME.map_styles.sb[v] then all_on = false break end end
                     for v = 1, 13 do GAME.map_styles.sb[v] = not all_on end
@@ -2408,7 +2442,7 @@ if lv:sub(1,8) == "/toggle:" then
                 elseif what:sub(1,2) == "sb" then
                     local v = tonumber(what:sub(3))
                     if v and v >= 1 and v <= 13 then
-                        if GAME.ranked then net_send("","message","Settings locked in ranked mode.") return end
+                        if GAME.ranked then net_send("","message","Map settings locked while ElimV2 rotation is on.") return end
                         GAME.map_styles.sb[v] = not GAME.map_styles.sb[v]
                         net_send("","message","SaandBuff V"..v..": "..(GAME.map_styles.sb[v] and "ON" or "OFF"))
                     end
@@ -2630,12 +2664,12 @@ function galcon_stop(winner_user)
         end
         if loser_uid then
 pcall(function()
-                apply_result(winner_uid, loser_uid, GAME.warmup_mode or not GAME.ranked)
+                apply_result(winner_uid, loser_uid)
             end)
             local ok_s, err_s = pcall(stats_save)
             if not ok_s then print("[ERROR] stats_save: " .. tostring(err_s)) end
         end
-        net_send("", "message", winner_user.title_value .. " conquered the galaxy!" .. (GAME.ranked and "  [RANKED]" or ""))
+        net_send("", "message", winner_user.title_value .. " conquered the galaxy!")
     else
         net_send("", "message", "Game over.")
     end
