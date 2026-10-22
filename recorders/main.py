@@ -48,6 +48,9 @@ EXPORT_DIR = os.path.join(DATA_DIR, 'replay_exports')   # temporary export files
 # STATS PERSISTENCE  (room_stats.json in OUTPUT_DIR)
 # ─────────────────────────────────────────────────────────────────────────────
 STATS_FILE = os.path.join(os.path.dirname(OUTPUT_DIR) or '.', 'room_stats.json')
+# Copy of the ELO/stats the room saves inside mod1.bin, rewritten whenever it
+# changes -- a backup in case mod1.bin is ever reset or corrupted.
+ELO_BACKUP_FILE = os.path.join(os.path.dirname(OUTPUT_DIR) or '.', 'room_elo_backup.json')
 
 def load_stats():
     try:
@@ -1136,6 +1139,7 @@ def recorder_thread(loop):
     in_game      = False      # True while a game is being recorded
     saw_batch_end = False      # True after processing batch_end sentinel
     cur_players  = {}         # identities from chunk 0, used for the final result
+    last_stats   = None       # last stats snapshot backed up to ELO_BACKUP_FILE
 
     def close_game_file():
         nonlocal game_file
@@ -1161,6 +1165,21 @@ def recorder_thread(loop):
             data = read_bin()
             if not data:
                 time.sleep(0.1); continue
+
+            # Back up the room's saved stats whenever they change.
+            try:
+                st = data.get("stats")
+                if st:
+                    snap = json.dumps(st, sort_keys=True)
+                    if snap != last_stats:
+                        tmp = ELO_BACKUP_FILE + ".tmp"
+                        with open(tmp, "w") as f:
+                            json.dump({"saved": datetime.now().isoformat(timespec="seconds"),
+                                       "stats": st}, f, indent=1)
+                        os.replace(tmp, ELO_BACKUP_FILE)
+                        last_stats = snap
+            except Exception as ex:
+                print(f"[stats] backup error: {ex}")
 
             # ── batch_end sentinel (from /endbatch button in room) ─────
             if data.get("batch_end") and not saw_batch_end:

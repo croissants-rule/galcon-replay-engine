@@ -328,6 +328,79 @@ function elo_text(uid)
     return string.format("ELO: %d  %dW-%dL", s.elo, s.wins, s.losses)
 end
 
+-- ── Persistent stats ─────────────────────────────────────────────────────
+-- STATS used to live only in memory, so every reload of the mod (an update,
+-- a restart, closing Galcon) wiped everyone's ELO. It is now saved inside
+-- g2.data (mod1.bin) under "stats" on every write and loaded whenever this
+-- file runs. Saved as a list of player records, not a uid-keyed table:
+-- Galcon's JSON (lua-cjson, sparse arrays as objects) would turn numeric uid
+-- keys into strings and they would no longer match anyone after loading.
+local STATS_HISTORY_KEEP = 20
+
+function stats_serialize()
+    local out = {}
+    for uid, s in pairs(STATS) do
+        local h2h = {}
+        for ouid, r in pairs(s.h2h or {}) do
+            h2h[#h2h + 1] = { uid = ouid, w = r.w or 0, l = r.l or 0 }
+        end
+        local hist, h = {}, s.history or {}
+        for i = math.max(1, #h - STATS_HISTORY_KEEP + 1), #h do hist[#hist + 1] = h[i] end
+        out[#out + 1] = {
+            uid = uid, name = s.name, color = s.color, elo = s.elo,
+            wins = s.wins, losses = s.losses, streak = s.streak,
+            h2h = h2h, history = hist,
+        }
+    end
+    return out
+end
+
+-- Merge saved records into STATS (saved values win over defaults).
+function stats_load(list)
+    if type(list) ~= "table" then return 0 end
+    local n = 0
+    for _, r in ipairs(list) do
+        if type(r) == "table" and r.uid ~= nil then
+            local h2h = {}
+            if type(r.h2h) == "table" then
+                for _, x in ipairs(r.h2h) do
+                    if type(x) == "table" and x.uid ~= nil then
+                        h2h[x.uid] = { w = tonumber(x.w) or 0, l = tonumber(x.l) or 0 }
+                    end
+                end
+            end
+            local hist = {}
+            if type(r.history) == "table" then
+                for _, x in ipairs(r.history) do if type(x) == "table" then hist[#hist + 1] = x end end
+            end
+            STATS[r.uid] = {
+                name = r.name or "?", color = r.color or "aaaaaa",
+                elo = tonumber(r.elo) or DEFAULT_ELO,
+                wins = tonumber(r.wins) or 0, losses = tonumber(r.losses) or 0,
+                streak = tonumber(r.streak) or 0,
+                h2h = h2h, history = hist,
+            }
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- Every g2.data write goes through here so the saved stats and the server
+-- port survive the replay recorder's chunk writes.
+function g2data_write(tbl)
+    tbl.stats = stats_serialize()
+    if GAME and GAME.data and GAME.data.port then tbl.port = GAME.data.port end
+    g2.data = json.encode(tbl)
+end
+
+-- Re-save the current g2.data contents with up-to-date stats.
+function stats_save()
+    local ok, decoded = pcall(json.decode, g2.data)
+    local existing = (ok and type(decoded) == "table") and decoded or {}
+    g2data_write(existing)
+end
+
 local HOST_UID  = nil   
 local HOST_NAME = nil   
 
@@ -1938,6 +2011,10 @@ function menu_init()
             end
             GAME.data = {}
         end
+        if next(STATS) == nil then
+            local n = stats_load(GAME.data.stats)
+            if n > 0 then print("[stats] loaded " .. n .. " players from saved data") end
+        end
         g2.form      = g2.form or {}
         g2.form.port = GAME.data.port or DEFAULT_PORT
         g2.html = [[
@@ -1956,7 +2033,7 @@ function menu_init()
     function obj:event(e)
         if e.type == "onclick" and e.value == "host" then
             GAME.data.port = g2.form.port or DEFAULT_PORT
-            g2.data        = json.encode(GAME.data)
+            g2data_write(GAME.data)
             g2.net_host(GAME.data.port)
             GAME.engine:next(GAME.modules.lobby)
         end
@@ -2354,7 +2431,7 @@ if GAME.batch_mode then
 GAME.batch_mode = false
 broadcast_html()
 net_send("", "message", "Batch ended -- uploading to Discord now...")
-g2.data = json.encode({batch_end = true})
+g2data_write({batch_end = true})
 else
 net_send(e.uid, "message", "No batch is currently active.")
 end
@@ -2533,6 +2610,8 @@ function galcon_stop(winner_user)
 pcall(function()
                 apply_result(winner_uid, loser_uid, GAME.warmup_mode or not GAME.ranked)
             end)
+            local ok_s, err_s = pcall(stats_save)
+            if not ok_s then print("[ERROR] stats_save: " .. tostring(err_s)) end
         end
         net_send("", "message", winner_user.title_value .. " conquered the galaxy!" .. (GAME.ranked and "  [RANKED]" or ""))
     else
@@ -2868,7 +2947,7 @@ local hex = string.format("%06x", c.color or 0x555555)
 if uid == p1_uid then p1_color = hex
 elseif uid == p2_uid then p2_color = hex end
 end
-g2.data = json.encode({
+g2data_write({
 payload = {
 chunk=0, final=false, status="part0",
 map=map_planets,
@@ -3284,7 +3363,7 @@ function flush_chunk(final, winner_info)
         existing.payload.winner_side = winner_info.side
     end
     existing.summary   = rec_log_summary
-    g2.data            = json.encode(existing)
+    g2data_write(existing)
     rec_log_events     = {}
     rec_log_pos        = {}
     rec_chunk_index    = rec_chunk_index + 1
@@ -3671,6 +3750,14 @@ if #rec_log_events+#rec_log_pos>=CHUNK_SIZE or rec_save_timer>=1.0 then
 rec_save_timer=0; flush_chunk(false)
 end
 end
+
+-- Load saved stats every time this file runs -- including Galcon's automatic
+-- mod refresh, which re-runs the file (recreating STATS empty) without
+-- calling init().
+pcall(function()
+    local d = json.decode(g2.data)
+    if type(d) == "table" then stats_load(d.stats) end
+end)
 
 function loop(t)  GAME.engine:loop(t)  end
 function event(e)
