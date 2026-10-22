@@ -218,6 +218,45 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);height:100vh;o
 .def-example{font-family:var(--mono);font-size:12px;color:#88b8cc;line-height:1.6;
   margin-top:6px;padding:6px 10px;background:#0a1a28;border-left:3px solid #2a4a6a;border-radius:0 3px 3px 0}
 
+/* ── Multi-player batches: filter, color toggle, player breakdown ───── */
+.bi-ctl{display:flex;flex-direction:column;gap:5px;padding:6px 8px 8px;border-bottom:1px solid #1a2a3a;margin-bottom:4px}
+.bi-sel{width:100%;background:#0d1c2c;color:#c8d8e8;border:1px solid #2a3a4a;border-radius:3px;font-family:var(--ui);font-size:11.5px;padding:4px}
+.bi-sel:disabled{color:#4a6080}
+.bi-clear{background:none;border:1px solid #2a3a4a;color:#8899aa;font-family:var(--ui);font-size:11px;padding:3px;border-radius:3px;cursor:pointer}
+.bi-clear:hover{color:#fff;border-color:#44ccff}
+.bi-when{font-family:var(--mono);font-size:10px;color:#4a6080;margin-left:auto}
+.bi-winner{display:flex;align-items:center;gap:6px}
+.cm-toggle{display:inline-flex;border:1px solid #2a3a4a;border-radius:3px;overflow:hidden;flex-shrink:0}
+.cm-btn{background:#0d1c2c;color:#8899aa;border:none;font-family:var(--ui);font-size:11px;padding:4px 8px;cursor:pointer;flex:1;white-space:nowrap}
+.bi-sep{padding:6px 10px 2px;font-family:var(--mono);font-size:10px;color:#4a6080;text-transform:uppercase;letter-spacing:.05em}
+.bi-matchup{display:flex;align-items:baseline;gap:4px;min-width:0}
+.bi-matchup .bi-num{margin-left:auto}
+.bi-win{font-size:11px}
+.cm-btn.on{background:#16324a;color:#44ccff;font-weight:700}
+.sf-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;font-family:var(--ui);font-size:12px;color:#a0c4d8}
+.sf-label b{color:#ffffff}
+.sm-players{margin-bottom:8px}
+.sm-sec-head{display:flex;align-items:baseline;gap:12px;margin:4px 0 6px}
+.sm-sec-note{font-family:var(--ui);font-size:10.5px;color:#5a7890}
+.pl-wrap{background:#080f18;border:1px solid #1a2a3a;border-radius:4px;overflow-x:auto;margin-bottom:10px}
+.pl-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+.pl-table th{background:#0e1c2a;color:#a0c4d8;text-align:left;padding:6px 10px;font-family:var(--ui);font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid #1a2a3a;white-space:nowrap;cursor:pointer;user-select:none}
+.pl-table th.sm-sorted{color:#44ccff}
+.pl-table td{padding:5px 10px;border-bottom:1px solid #101c28;white-space:nowrap;color:#d0e8f8}
+.pl-table tbody tr{cursor:pointer}
+.pl-table tbody tr:hover{background:#101f30}
+.pl-table tbody tr.active{background:#16324a}
+.pl-table.h2h th,.pl-table.h2h td{text-align:center}
+.pl-table.h2h tbody th{text-align:right;text-transform:none;letter-spacing:0;font-size:11.5px;cursor:default}
+.pl-table.h2h thead th{text-transform:none;letter-spacing:0;font-size:11.5px;cursor:default}
+.h2h-self{background:#0b1520}
+.h2h-none{color:#2a3a4a}
+.pl-table td.h2h-up{color:#5fe39a;cursor:pointer}.pl-table td.h2h-down{color:#ff7a85;cursor:pointer}.pl-table td.h2h-even{color:#d0e8f8;cursor:pointer}
+.pl-table td.h2h-none{color:#2a3a4a}
+.h2h-up:hover,.h2h-down:hover,.h2h-even:hover{background:#16324a}
+.h2h-unk{color:#4a6080;font-size:10px;margin-left:2px}
+
 </style>
 </head>
 <body>
@@ -416,7 +455,7 @@ document.getElementById('fi').addEventListener('change', function(e){
 function goBack() {
   if (state) { state.playing=false; cancelAnimationFrame(state.raf); state=null; }
   replay=null; updateMetricsPanel();
-  batchGames=null; batchIdx=0; _summaryRows=null; _summaryForGames=null;
+  batchGames=null; batchIdx=0; _summaryRows=null; _summaryForGames=null; batchPlayers=null; batchPlayerOrder=[]; batchFilter={a:null,b:null}; _viewRows=null;
   document.getElementById('batchSidebar').style.display='none';
   var _bt=document.getElementById('batchToggle'); if(_bt)_bt.style.display='none';
   document.getElementById('app').classList.remove('batch-mode');
@@ -444,7 +483,7 @@ function loadFile(file) {
         showErr('Batch file detected but no valid games found. Check browser console for details.');
         return;
       }
-      batchGames=batch; batchIdx=0;
+      batchGames=batch; batchIdx=0; buildBatchPlayers();
       _summaryRows=null; _summaryForGames=null; // invalidate summary cache
       document.getElementById('batchSidebar').style.display='flex';
       document.getElementById('batchToggle').style.display='block';
@@ -464,7 +503,7 @@ function loadFile(file) {
       batchGames=[{meta:{player_name:replay.p1Name,enemy_name:replay.p2Name,
         player_color:(replay.p1Color||'#00ff88').replace('#',''),
         enemy_color:(replay.p2Color||'#ff4455').replace('#','')}, lines:linesForSummary}];
-      batchIdx=0;
+      batchIdx=0; buildBatchPlayers(); applyGameColors(replay, batchGames[0]);
       _summaryRows=null; _summaryForGames=null; // invalidate summary cache
       dropEl.classList.add('hidden');
       document.getElementById('app').classList.add('show');
@@ -544,7 +583,7 @@ var batchGames=null,batchIdx=0;
 function loadBatchGame(idx){
   if(!batchGames||idx<0||idx>=batchGames.length)return;
   batchIdx=idx;
-  replay=parseReplay(batchGames[idx].lines.join('\n')); updateMetricsPanel();
+  replay=parseReplay(batchGames[idx].lines.join('\n')); applyGameColors(replay, batchGames[idx]); updateMetricsPanel();
   if(!replay)return;
   initViewer();
   renderBatchSidebar();
@@ -578,40 +617,255 @@ function detectWinnerFromLines(lines, p1Name, p2Name, p1c, p2c){
   return {winner:winner,winColor:winColor};
 }
 
+// ── MULTI-PLAYER BATCHES: player identity, filter, color mode ────────────
+// A batch can hold 1v1 games between many different players (round robins,
+// replay-browser exports). Each game side is resolved to a stable player
+// key — the Galcon uid when the recording has one, otherwise the lowercased
+// name (merged into that name's uid when the same name appears with one
+// elsewhere in the file) — so stats and filters follow the player, not
+// whichever side (P1/P2) or color they happened to have in a given game.
+var PLAYER_PALETTE=['#00ff88','#ff4455','#4da6ff','#ffcc33','#c77dff','#ff8c42',
+                    '#2ee6d6','#ff66c4','#a3e635','#e8e8e8','#8b9dff','#ffb3a7'];
+var colorMode='game';
+try{ colorMode=localStorage.getItem('rvp_colorMode')||'game'; }catch(e){}
+var batchPlayers=null, batchPlayerOrder=[], batchFilter={a:null,b:null};
+
+function _hexColor(c, fallback){
+  c=String(c||'').replace('#','');
+  return /^[0-9a-fA-F]{6}$/.test(c) ? '#'+c.toLowerCase() : fallback;
+}
+
+function _gameIdentity(g){
+  if(g._id) return g._id;
+  var m=g.meta||{}, init={};
+  for(var i=0;i<Math.min(3,g.lines.length);i++){
+    try{ var o=JSON.parse(g.lines[i]); if(o&&o.type==='init'){init=o;break;} }catch(e){}
+  }
+  g._id={
+    p1Name:String(m.player_name||init.player_name||'Player 1'),
+    p2Name:String(m.enemy_name||init.enemy_name||'Player 2'),
+    p1Uid:String(m.player_uid||init.player_uid||''),
+    p2Uid:String(m.enemy_uid||init.enemy_uid||''),
+    p1Color:_hexColor(m.player_color||init.player_color,'#00ff88'),
+    p2Color:_hexColor(m.enemy_color||init.enemy_color,'#ff4455'),
+    stamp:String(m.timestamp||init.session||'')
+  };
+  return g._id;
+}
+
+function buildBatchPlayers(){
+  batchPlayers={}; batchPlayerOrder=[]; batchFilter={a:null,b:null};
+  if(!batchGames) return;
+  var nameUids={};
+  batchGames.forEach(function(g){
+    var id=_gameIdentity(g);
+    [[id.p1Name,id.p1Uid],[id.p2Name,id.p2Uid]].forEach(function(s){
+      if(!s[1]) return;
+      var k=s[0].toLowerCase(); (nameUids[k]=nameUids[k]||{})[s[1]]=1;
+    });
+  });
+  function keyFor(name,uid){
+    if(uid) return 'u:'+uid;
+    var u=nameUids[name.toLowerCase()], us=u?Object.keys(u):[];
+    return us.length===1 ? 'u:'+us[0] : 'n:'+name.toLowerCase();
+  }
+  batchGames.forEach(function(g){
+    var id=_gameIdentity(g);
+    g.p1Key=keyFor(id.p1Name,id.p1Uid); g.p2Key=keyFor(id.p2Name,id.p2Uid);
+    [[g.p1Key,id.p1Name],[g.p2Key,id.p2Name]].forEach(function(s){
+      var p=batchPlayers[s[0]]=batchPlayers[s[0]]||{key:s[0],names:{},games:0};
+      p.games++; p.names[s[1]]=(p.names[s[1]]||0)+1;
+    });
+  });
+  Object.keys(batchPlayers).forEach(function(k){
+    var p=batchPlayers[k], best=null;
+    Object.keys(p.names).forEach(function(n){ if(best===null||p.names[n]>p.names[best]) best=n; });
+    p.name=best;
+  });
+  batchPlayerOrder=Object.keys(batchPlayers).sort(function(a,b){
+    var pa=batchPlayers[a], pb=batchPlayers[b];
+    return pb.games-pa.games || pa.name.toLowerCase().localeCompare(pb.name.toLowerCase());
+  });
+  // Most-played players get the most distinct colors; beyond the palette,
+  // spread hues by the golden angle so neighbours never look alike.
+  batchPlayerOrder.forEach(function(k,i){
+    batchPlayers[k].color = i<PLAYER_PALETTE.length ? PLAYER_PALETTE[i]
+      : 'hsl('+Math.round((i*137.508)%360)+',80%,62%)';
+  });
+}
+
+function playerName(key){ return (batchPlayers&&batchPlayers[key]) ? batchPlayers[key].name : '?'; }
+
+function gameColors(g){
+  var id=_gameIdentity(g);
+  if(colorMode==='player' && batchPlayers && batchPlayers[g.p1Key] && batchPlayers[g.p2Key]){
+    var c1=batchPlayers[g.p1Key].color, c2=batchPlayers[g.p2Key].color;
+    if(c1===c2) c2=(c1==='#ff4455')?'#4da6ff':'#ff4455';
+    return {p1:c1,p2:c2};
+  }
+  return {p1:id.p1Color,p2:id.p2Color};
+}
+
+function applyGameColors(r, g){
+  if(r && g){ var c=gameColors(g); r.p1Color=c.p1; r.p2Color=c.p2; }
+  return r;
+}
+
+function gameInFilter(g){
+  var a=batchFilter.a, b=batchFilter.b;
+  if(a && g.p1Key!==a && g.p2Key!==a) return false;
+  if(b && g.p1Key!==b && g.p2Key!==b) return false;
+  return true;
+}
+
+function filteredGameIdx(){
+  var out=[];
+  for(var i=0;i<(batchGames?batchGames.length:0);i++) if(gameInFilter(batchGames[i])) out.push(i);
+  return out;
+}
+
+function opponentsOf(key){
+  var counts={};
+  (batchGames||[]).forEach(function(g){
+    if(g.p1Key===key) counts[g.p2Key]=(counts[g.p2Key]||0)+1;
+    else if(g.p2Key===key) counts[g.p1Key]=(counts[g.p1Key]||0)+1;
+  });
+  return Object.keys(counts).sort(function(a,b){return counts[b]-counts[a];})
+               .map(function(k){return {key:k,games:counts[k]};});
+}
+
+function filterLabel(){
+  if(!batchFilter.a) return '';
+  return playerName(batchFilter.a)+(batchFilter.b?' vs '+playerName(batchFilter.b):' (all opponents)');
+}
+
+function _summaryOpen(){ var m=document.getElementById('summaryModal'); return m&&m.classList.contains('open'); }
+
+function setBatchFilter(a,b){
+  batchFilter={a:a||null,b:(a&&b&&b!==a)?b:null};
+  renderBatchSidebar();
+  var vis=filteredGameIdx();
+  if(vis.length && vis.indexOf(batchIdx)<0) loadBatchGame(vis[0]);
+  if(_summaryOpen()) renderSummaryScreen();
+}
+
+function setColorMode(mode){
+  colorMode=(mode==='player')?'player':'game';
+  try{ localStorage.setItem('rvp_colorMode',colorMode); }catch(e){}
+  recolorCurrentGame();
+  renderBatchSidebar();
+  if(_summaryOpen()) renderSummaryScreen();
+}
+
+// Repaint the open game in the new colors without resetting playback.
+function recolorCurrentGame(){
+  if(!replay||!batchGames||!batchGames[batchIdx]) return;
+  applyGameColors(replay, batchGames[batchIdx]);
+  document.documentElement.style.setProperty('--p1', replay.p1Color);
+  document.documentElement.style.setProperty('--p2', replay.p2Color);
+  refreshWinnerBadge(replay);
+  try{ if(state){ updateHUD(); drawFrame(); } }catch(e){}
+}
+
+function colorToggleHtml(){
+  return '<span class="cm-toggle" title="Game colors: what each player picked in that game. '+
+    'Per player: one fixed color per player across every game in this file.">'+
+    '<button class="cm-btn'+(colorMode==='game'?' on':'')+'" onclick="setColorMode(\'game\')">Game colors</button>'+
+    '<button class="cm-btn'+(colorMode==='player'?' on':'')+'" onclick="setColorMode(\'player\')">Per player</button></span>';
+}
+
+function _fmtStamp(s){
+  var m=/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})/.exec(s||'');
+  if(!m) return '';
+  var mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m[2]-1]||m[2];
+  return mon+' '+(+m[3])+' '+m[4]+':'+m[5];
+}
+
+function _esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
 function renderBatchSidebar(){
   var sb=document.getElementById('batchSidebar');
   if(!sb||!batchGames)return;
-  var title=batchGames.length===1?'1 game':batchGames.length+' games';
+  if(!batchPlayers) buildBatchPlayers();
+  var vis=filteredGameIdx(), n=batchGames.length;
+  var title=(vis.length===n ? (n===1?'1 game':n+' games') : vis.length+' of '+n+' games');
   sb.innerHTML='<div class="bi-title">'+title+'</div>';
-  var lastFile=null;
-  for(var i=0;i<batchGames.length;i++){
-    var g=batchGames[i], m=g.meta;
-    if(m.source_file&&m.source_file!==lastFile){
+
+  // Filter + color controls
+  var ctl=document.createElement('div');
+  ctl.className='bi-ctl';
+  var html='';
+  if(batchPlayerOrder.length>2){
+    html+='<select id="biFilterA" class="bi-sel"><option value="">All players ('+batchPlayerOrder.length+')</option>';
+    batchPlayerOrder.forEach(function(k){
+      html+='<option value="'+_esc(k)+'"'+(batchFilter.a===k?' selected':'')+'>'+_esc(batchPlayers[k].name)+' ('+batchPlayers[k].games+')</option>';
+    });
+    html+='</select><select id="biFilterB" class="bi-sel"'+(batchFilter.a?'':' disabled')+'>'+
+          '<option value="">'+(batchFilter.a?'Any opponent':'vs… (pick a player first)')+'</option>';
+    if(batchFilter.a) opponentsOf(batchFilter.a).forEach(function(o){
+      html+='<option value="'+_esc(o.key)+'"'+(batchFilter.b===o.key?' selected':'')+'>vs '+_esc(playerName(o.key))+' ('+o.games+')</option>';
+    });
+    html+='</select>';
+    if(batchFilter.a) html+='<button class="bi-clear" onclick="setBatchFilter(null,null)">✕ Clear filter</button>';
+  }
+  if(n>1) html+=colorToggleHtml();
+  ctl.innerHTML=html;
+  if(html) sb.appendChild(ctl);
+  var fa=document.getElementById('biFilterA'), fb=document.getElementById('biFilterB');
+  if(fa) fa.onchange=function(){ setBatchFilter(this.value||null, null); };
+  if(fb) fb.onchange=function(){ setBatchFilter(batchFilter.a, this.value||null); };
+
+  if(!vis.length){
+    var none=document.createElement('div'); none.className='bi-sep'; none.textContent='No games match this filter';
+    sb.appendChild(none); return;
+  }
+  var lastFile=null, perFile={}, grouped=false;
+  batchGames.forEach(function(g){ var f=(g.meta||{}).source_file; if(f){ perFile[f]=(perFile[f]||0)+1; if(perFile[f]>1) grouped=true; } });
+  vis.forEach(function(i){
+    var g=batchGames[i], m=g.meta||{}, id=_gameIdentity(g), col=gameColors(g);
+    if(grouped&&m.source_file&&m.source_file!==lastFile){
       lastFile=m.source_file;
       var sep=document.createElement('div');
       sep.className='bi-sep';
-      sep.textContent=m.source_file.replace(/^.*[\/\\]/,'').replace(/\.jsonl?$/,'');
+      sep.textContent=m.source_file.replace(/^.*[\/\\]/,'').replace(/\.jsonl?(\.gz)?$/,'');
       sb.appendChild(sep);
     }
     var d=document.createElement('div');
     d.className='batch-item'+(i===batchIdx?' active':'');
-    var p1c='#'+(m.player_color||'00ff88'), p2c='#'+(m.enemy_color||'ff4455');
-    var p1n=m.player_name||'P1', p2n=m.enemy_name||'P2';
-
-    var wr=detectWinnerFromLines(g.lines,p1n,p2n,p1c,p2c);
-    var winner=wr.winner, winColor=wr.winColor;
-
+    var wr=detectWinnerFromLines(g.lines,id.p1Name,id.p2Name,col.p1,col.p2);
+    var when=_fmtStamp(id.stamp);
     d.innerHTML=
-      '<div class="bi-matchup">'+
-        '<span style="color:'+p1c+'">'+p1n+'</span>'+
-        '<span class="bi-vs"> v </span>'+
-        '<span style="color:'+p2c+'">'+p2n+'</span>'+
-        '<span class="bi-num">#'+(i+1)+'</span>'+
-      '</div>'+
-      (winner?'<div class="bi-winner"><span class="bi-win" style="color:'+winColor+'">'+winner+' WIN</span></div>':'');
-
-    d.addEventListener('click',(function(ix){return function(){loadBatchGame(ix);};})(i));
+      '<div style="flex:1;min-width:0">'+
+        '<div class="bi-matchup">'+
+          '<span style="color:'+col.p1+'">'+_esc(id.p1Name)+'</span>'+
+          '<span class="bi-vs"> v </span>'+
+          '<span style="color:'+col.p2+'">'+_esc(id.p2Name)+'</span>'+
+          '<span class="bi-num">#'+(i+1)+'</span>'+
+        '</div>'+
+        ((wr.winner||when)?'<div class="bi-winner">'+
+          (wr.winner?'<span class="bi-win" style="color:'+wr.winColor+'">'+_esc(wr.winner)+' WIN</span>':'')+
+          (when?'<span class="bi-when">'+when+'</span>':'')+'</div>':'')+
+      '</div>';
+    d.addEventListener('click',function(){loadBatchGame(i);});
     sb.appendChild(d);
+  });
+}
+
+// Winner badge in the header (also used when recoloring).
+function refreshWinnerBadge(r){
+  var wEl=document.getElementById('mwinner');
+  if(!wEl) return;
+  var curLines = (batchGames && batchGames[batchIdx]) ? batchGames[batchIdx].lines : null;
+  if(!curLines){ wEl.textContent=''; return; }
+  var wr=detectWinnerFromLines(curLines, r.p1Name, r.p2Name, r.p1Color, r.p2Color);
+  if(wr.winner){
+    wEl.textContent=wr.winner+' WIN';
+    wEl.style.color=wr.winColor;
+    wEl.style.border='1px solid '+wr.winColor;
+    wEl.style.borderRadius='4px';
+  } else {
+    wEl.textContent='';
+    wEl.style.border='none';
   }
 }
 
@@ -665,27 +919,206 @@ function computeGameSummaryRow(g, idx){
   }
 }
 
-function computeAllGameSummaries(){
+// Raw per-game rows, parsed once per loaded file and cached.
+function computeRawGameSummaries(){
   if(_summaryRows && _summaryForGames===batchGames) return _summaryRows;
+  if(!batchPlayers) buildBatchPlayers();
   var rows=[];
-  for(var i=0;i<(batchGames?batchGames.length:0);i++) rows.push(computeGameSummaryRow(batchGames[i], i));
-  _summaryRows=rows; _summaryForGames=batchGames;
+  for(var i=0;i<(batchGames?batchGames.length:0);i++){
+    var row=computeGameSummaryRow(batchGames[i], i);
+    row.p1Key=batchGames[i].p1Key; row.p2Key=batchGames[i].p2Key;
+    rows.push(row);
+  }
+  _summaryRows=rows; _summaryForGames=batchGames; _viewRows=null;
   return rows;
 }
 
-// Distinct name check — if every loaded game shares the same name for a
-// side, use it as that side's header; otherwise fall back to a generic
-// label (since opponents typically vary game-to-game within a batch).
+// Flip a row so the other side becomes P1. Every per-side field and every
+// per-side series is swapped; signed values (VT) change sign. Fleet-level
+// `adv` is already from the sender's own perspective, so only `player` flips.
+function _orientRow(r){
+  var o={}; for(var k in r) o[k]=r[k];
+  [['p1Name','p2Name'],['p1Color','p2Color'],['p1Key','p2Key'],['captures1','captures2'],
+   ['planets1','planets2'],['rap1','rap2'],['aap1','aap2'],['fp1','fp2'],['fe1','fe2']].forEach(function(p){
+    o[p[0]]=r[p[1]]; o[p[1]]=r[p[0]];
+  });
+  o.summary=(r.summary||[]).map(function(pt){
+    var q=copyObj(pt); q.ps=pt.es; q.es=pt.ps; q.pp=pt.ep; q.ep=pt.pp;
+    if('pf' in pt||'ef' in pt){ q.pf=pt.ef; q.ef=pt.pf; }
+    return q;
+  });
+  o.vtSeries=(r.vtSeries||[]).map(function(pt){
+    var q=copyObj(pt); q.v=(pt.v==null)?null:-pt.v; q.leader=pt.leader===1?2:(pt.leader===2?1:pt.leader);
+    return q;
+  });
+  o.fpSeries=(r.fpSeries||[]).map(function(pt){ var q=copyObj(pt); q.v1=pt.v2; q.v2=pt.v1; return q; });
+  o.fleetAdvPoints=(r.fleetAdvPoints||[]).map(function(pt){ var q=copyObj(pt); q.player=pt.player===1?2:1; return q; });
+  o.swapped=true;
+  return o;
+}
+
+// The rows every summary view and chart reads: only games in the current
+// filter, recolored for the current color mode, and — when a player is
+// picked — oriented so that player is always P1 (so "P1" charts become
+// "that player vs their opponents").
+var _viewRows=null, _viewKey=null;
+function computeAllGameSummaries(){
+  var raw=computeRawGameSummaries();
+  var key=JSON.stringify([batchFilter.a,batchFilter.b,colorMode,raw.length]);
+  if(_viewRows && _viewKey===key) return _viewRows;
+  var out=[];
+  raw.forEach(function(r){
+    var g=batchGames[r.idx];
+    if(!g || !gameInFilter(g)) return;
+    var c=gameColors(g), row={};
+    for(var k in r) row[k]=r[k];
+    row.p1Color=c.p1; row.p2Color=c.p2;
+    if(row.winner) row.winColor=(row.winner===row.p1Name)?c.p1:c.p2;
+    if(batchFilter.a && row.ok && row.p2Key===batchFilter.a) row=_orientRow(row);
+    else if(batchFilter.a && !row.ok && row.p2Key===batchFilter.a){
+      row.p1Name=r.p2Name; row.p2Name=r.p1Name; row.p1Color=c.p2; row.p2Color=c.p1;
+    }
+    out.push(row);
+  });
+  _viewRows=out; _viewKey=key;
+  return out;
+}
+
+// Header names/colors for the two sides of every aggregate chart.
 function _resolveHeaderNames(okRows){
   function _uniq(vals){ var seen={}, out=[]; for(var i=0;i<vals.length;i++){ if(!seen[vals[i]]){seen[vals[i]]=1;out.push(vals[i]);} } return out; }
   var p1Names=_uniq(okRows.map(function(r){return r.p1Name;}));
   var p2Names=_uniq(okRows.map(function(r){return r.p2Name;}));
-  return {
+  var hdr={
     p1Name: p1Names.length===1 ? p1Names[0] : 'Player 1',
     p2Name: p2Names.length===1 ? p2Names[0] : 'Opponents',
     p1Color: okRows.length ? okRows[0].p1Color : 'var(--p1)',
     p2Color: okRows.length ? okRows[0].p2Color : 'var(--p2)'
   };
+  if(batchFilter.a){
+    hdr.p1Name=playerName(batchFilter.a);
+    if(batchFilter.b) hdr.p2Name=playerName(batchFilter.b);
+    else if(p2Names.length!==1) hdr.p2Name='Opponents';
+    if(colorMode==='player' && batchPlayers){
+      hdr.p1Color=batchPlayers[batchFilter.a].color;
+      hdr.p2Color=batchFilter.b ? batchPlayers[batchFilter.b].color
+                                : (hdr.p1Color==='#ff4455'?'#4da6ff':'#ff4455');
+    }
+  }
+  return hdr;
+}
+
+// ── Per-player breakdown ────────────────────────────────────────────────
+// Every side of every visible game is credited to the player who played it.
+function computePlayerStats(rows){
+  var stats={};
+  function side(r, key, n){   // n = 1 or 2
+    var s=stats[key]=stats[key]||{key:key,games:0,w:0,l:0,unk:0,dur:0,durN:0,cap:0,capN:0,
+      rap:0,rapN:0,aap:0,aapN:0,fp:0,fpN:0,fe:0,feN:0,opp:{}};
+    var me=n===1?r.p1Name:r.p2Name, oppKey=n===1?r.p2Key:r.p1Key;
+    s.games++;
+    var o=s.opp[oppKey]=s.opp[oppKey]||{w:0,l:0,unk:0};
+    if(!r.winner){ s.unk++; o.unk++; }
+    else if(r.winner===me){ s.w++; o.w++; }
+    else { s.l++; o.l++; }
+    if(!r.ok) return;
+    if(r.duration){ s.dur+=r.duration; s.durN++; }
+    var cap=n===1?r.captures1:r.captures2; if(cap!=null){ s.cap+=cap; s.capN++; }
+    [['rap','rap'],['aap','aap'],['fp','fp'],['fe','fe']].forEach(function(f){
+      var v=r[f[1]+n]; if(v!=null){ s[f[0]]+=v; s[f[0]+'N']++; }
+    });
+  }
+  rows.forEach(function(r){ if(r.p1Key) side(r,r.p1Key,1); if(r.p2Key) side(r,r.p2Key,2); });
+  return Object.keys(stats).map(function(k){ return stats[k]; })
+    .sort(function(a,b){ return b.games-a.games || playerName(a.key).localeCompare(playerName(b.key)); });
+}
+
+var _playerSortKey='games', _playerSortDir=-1;
+function sortPlayersBy(key){
+  if(_playerSortKey===key) _playerSortDir=-_playerSortDir; else { _playerSortKey=key; _playerSortDir=-1; }
+  renderSummaryScreen();
+}
+
+function renderPlayerBreakdown(rows){
+  var el=document.getElementById('summaryPlayers');
+  if(!el) return;
+  var nPlayers=batchPlayerOrder.length;
+  var stats=computePlayerStats(rows);
+  if(!stats.length){ el.innerHTML=''; return; }
+  function av(s,f){ return s[f+'N'] ? s[f]/s[f+'N'] : null; }
+  function wp(s){ var d=s.w+s.l; return d? 100*s.w/d : null; }
+  function pcol(k){ return (colorMode==='player'&&batchPlayers[k]) ? batchPlayers[k].color : '#d0e8f8'; }
+  var cols=[
+    {k:'name', l:'Player',    v:function(s){return playerName(s.key).toLowerCase();},
+      h:function(s){return '<span style="color:'+pcol(s.key)+';font-weight:700">'+_esc(playerName(s.key))+'</span>';}},
+    {k:'games',l:'Games',     v:function(s){return s.games;}},
+    {k:'wl',   l:'W–L',       v:function(s){return s.w-s.l;}, h:function(s){return s.w+'–'+s.l+(s.unk?' <span style="color:#4a6080">(+'+s.unk+'?)</span>':'');}},
+    {k:'wp',   l:'Win %',     v:function(s){var x=wp(s);return x==null?-1:x;}, h:function(s){return _fmtPct(wp(s));}},
+    {k:'dur',  l:'Avg length',v:function(s){return av(s,'dur')||0;}, h:function(s){return av(s,'dur')==null?'—':_fmtDur(av(s,'dur'));}},
+    {k:'rap',  l:'Avg RAP',   v:function(s){var x=av(s,'rap');return x==null?-1:x;}, h:function(s){return _fmtPct(av(s,'rap'));}},
+    {k:'aap',  l:'Avg AAP',   v:function(s){var x=av(s,'aap');return x==null?-1:x;}, h:function(s){return _fmtPct(av(s,'aap'));}},
+    {k:'fp',   l:'Avg FP',    v:function(s){var x=av(s,'fp');return x==null?-1:x;}, h:function(s){return _fmtNum(av(s,'fp'),1);}},
+    {k:'fe',   l:'Avg FE',    v:function(s){var x=av(s,'fe');return x==null?-1:x;}, h:function(s){return _fmtNum(av(s,'fe'),2);}},
+    {k:'cap',  l:'Captures/g',v:function(s){return av(s,'cap')||0;}, h:function(s){return _fmtNum(av(s,'cap'),1);}}
+  ];
+  var sc=null; cols.forEach(function(c){ if(c.k===_playerSortKey) sc=c; });
+  if(sc) stats.sort(function(a,b){ var x=sc.v(a), y=sc.v(b); return x<y?-_playerSortDir:(x>y?_playerSortDir:0); });
+
+  var html='<div class="sm-sec-head"><span class="sm-chart-title">Players</span>'+
+    '<span class="sm-sec-note">'+(nPlayers>1?'click a player to focus every chart on them':'')+'</span></div>'+
+    '<div class="pl-wrap"><table class="pl-table"><thead><tr>';
+  cols.forEach(function(c){
+    html+='<th onclick="sortPlayersBy(\''+c.k+'\')"'+(c.k===_playerSortKey?' class="sm-sorted"':'')+'>'+c.l+
+      (c.k===_playerSortKey?(_playerSortDir>0?' ▲':' ▼'):'')+'</th>';
+  });
+  html+='</tr></thead><tbody>';
+  stats.forEach(function(s){
+    html+='<tr class="'+(batchFilter.a===s.key?'active':'')+'" onclick="setBatchFilter('+_esc(_jsq(s.key))+',null)">';
+    cols.forEach(function(c){ html+='<td>'+(c.h?c.h(s):c.v(s))+'</td>'; });
+    html+='</tr>';
+  });
+  html+='</tbody></table></div>';
+
+  // Head-to-head matrix: row player's record against each column player.
+  var keys=stats.map(function(s){return s.key;}).slice(0,16);
+  if(keys.length>=3){
+    var byKey={}; stats.forEach(function(s){ byKey[s.key]=s; });
+    html+='<div class="sm-sec-head"><span class="sm-chart-title">Head to head</span>'+
+      '<span class="sm-sec-note">row player’s wins–losses vs column player · click a cell to see those games</span></div>'+
+      '<div class="pl-wrap"><table class="pl-table h2h"><thead><tr><th></th>';
+    keys.forEach(function(k){ html+='<th style="color:'+pcol(k)+'">'+_esc(playerName(k))+'</th>'; });
+    html+='</tr></thead><tbody>';
+    keys.forEach(function(rk){
+      html+='<tr><th style="color:'+pcol(rk)+'">'+_esc(playerName(rk))+'</th>';
+      keys.forEach(function(ck){
+        if(rk===ck){ html+='<td class="h2h-self"></td>'; return; }
+        var o=byKey[rk].opp[ck];
+        if(!o){ html+='<td class="h2h-none">·</td>'; return; }
+        var cls=o.w>o.l?'h2h-up':(o.w<o.l?'h2h-down':'h2h-even');
+        html+='<td class="'+cls+'" onclick="setBatchFilter('+_esc(_jsq(rk))+','+_esc(_jsq(ck))+')">'+o.w+'–'+o.l+
+              (o.unk?'<span class="h2h-unk">+'+o.unk+'</span>':'')+'</td>';
+      });
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    if(stats.length>16) html+='<div class="sm-sec-note">Showing the 16 most-played players.</div>';
+  }
+  el.innerHTML=html;
+}
+
+function _jsq(s){ return "'"+String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+"'"; }
+
+function renderSummaryFilterBar(){
+  var el=document.getElementById('summaryFilterBar');
+  if(!el) return;
+  var lbl=filterLabel(), n=batchGames?batchGames.length:0, shown=filteredGameIdx().length;
+  el.innerHTML=
+    (lbl ? '<span class="sf-label">Focused on <b>'+_esc(lbl)+'</b> — '+shown+' of '+n+' games · '+
+            _esc(playerName(batchFilter.a))+' is shown as P1 in every chart</span>'+
+            '<button class="gm-btn" onclick="setBatchFilter(null,null)">✕ Clear</button>'
+         : '<span class="sf-label">'+n+' game'+(n===1?'':'s')+(batchPlayerOrder.length>2?' · '+batchPlayerOrder.length+
+             ' players · the P1/Opponents charts below follow recording slots, so click a player to focus them':'')+'</span>')+
+    (n>1 ? colorToggleHtml() : '');
 }
 
 function computeAllFleetAdvPoints(){
@@ -975,6 +1408,8 @@ function sortSummaryBy(key){
 
 function renderSummaryScreen(){
   var rows=computeAllGameSummaries().slice();
+  renderSummaryFilterBar();
+  renderPlayerBreakdown(rows);
   var col=null;
   for(var i=0;i<SUMMARY_COLS.length;i++) if(SUMMARY_COLS[i].key===_summarySortKey) col=SUMMARY_COLS[i];
   if(col){
@@ -2004,7 +2439,7 @@ function exportLedgerCSV(){
   function q(v){ v=(v==null)?'':String(v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }
   for(var i=0;i<rows.length;i++){ var r=rows[i]; if(!r.ok||!r.fleetAdvPoints) continue;
     r.fleetAdvPoints.forEach(function(p){
-      out.push([i+1,r.p1Name,r.p2Name,p.player,p.player===1?r.p1Name:r.p2Name,p.player===1?r.p2Name:r.p1Name,p.t0,p.t,p.n,p.ships,p.captured?1:0,p.hold,p.fe,p.P20,p.D20,p.P40,p.D40,p.cens20,p.cens40,p.adv,p.prodAdv,p.prod,p.gar0,p.enemyOwned,p.nFleets].map(q).join(',')); }); }
+      out.push([r.idx+1,r.p1Name,r.p2Name,p.player,p.player===1?r.p1Name:r.p2Name,p.player===1?r.p2Name:r.p1Name,p.t0,p.t,p.n,p.ships,p.captured?1:0,p.hold,p.fe,p.P20,p.D20,p.P40,p.D40,p.cens20,p.cens40,p.adv,p.prodAdv,p.prod,p.gar0,p.enemyOwned,p.nFleets].map(q).join(',')); }); }
   var blob=new Blob([out.join('\n')],{type:'text/csv'}), a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download='float_ledger_assaults.csv'; document.body.appendChild(a); a.click(); setTimeout(function(){document.body.removeChild(a);},500);
 }
@@ -2113,22 +2548,7 @@ function initViewer() {
   // reusing the same detectWinnerFromLines() already used for the batch
   // sidebar and summary screen against this game's own raw lines (which
   // get populated as a batch-of-1 even for single-game loads).
-  (function(){
-    var wEl=document.getElementById('mwinner');
-    if(!wEl) return;
-    var curLines = (batchGames && batchGames[batchIdx]) ? batchGames[batchIdx].lines : null;
-    if(!curLines){ wEl.textContent=''; return; }
-    var wr=detectWinnerFromLines(curLines, r.p1Name, r.p2Name, r.p1Color, r.p2Color);
-    if(wr.winner){
-      wEl.textContent=wr.winner+' WIN';
-      wEl.style.color=wr.winColor;
-      wEl.style.border='1px solid '+wr.winColor;
-      wEl.style.borderRadius='4px';
-    } else {
-      wEl.textContent='';
-      wEl.style.border='none';
-    }
-  })();
+  refreshWinnerBadge(r);
 
   // Map-type badge. Bot room replays log map_regime (rush/balanced/
   // expansion) plus cost_mult/home_radius_scale directly. PvP replays
@@ -6038,6 +6458,8 @@ window.addEventListener('resize',function(){_resizeBigCharts();drawBigCharts();}
     <button class="gm-btn" onclick="closeSummaryScreen()" style="margin-left:auto">✕ Close</button>
   </div>
   <div id="summaryScrollArea">
+  <div id="summaryFilterBar" class="sf-bar"></div>
+  <div id="summaryPlayers" class="sm-players"></div>
   <div id="summaryStatsBar" class="sm-statsbar"></div>
   <div id="fleetAdvWrap" class="sm-chartwrap">
     <div class="sm-chart-head">
