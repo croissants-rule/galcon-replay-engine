@@ -330,7 +330,7 @@ end
 -- A running score shown next to each player. Standard / winner stays on:
 -- +1 for every game won. Tournament / round robin: +1 only for the event
 -- winner(s). Kept in memory only -- never written to g2.data or replays, and
--- it doesn't touch ELO. Reset with the lobby button or /resetscores.
+-- it doesn't touch ELO. Reset with the lobby button or /reset (scores only, never ELO).
 function tally_get(uid)
     if uid == nil then return 0 end
     return (GAME.tally and GAME.tally[tostring(uid)]) or 0
@@ -344,7 +344,7 @@ end
 
 function tally_reset(by)
     GAME.tally = {}
-    net_send("", "message", "Scores reset by " .. (by or "?") .. ".")
+    net_send("", "message", "Scores reset to 0 by " .. (by or "?") .. " (ELO unchanged).")
 end
 
 -- /elo        -> your own rating
@@ -1287,6 +1287,7 @@ function init()
     GAME.batch_mode  = false
     GAME.ranked          = false
     GAME.distance_change = false
+    GAME.dc_mode         = "off"   -- "off" / "on" / "random" (50% per game); sets distance_change at game start
     GAME.last_style      = "saandbuff"
     GAME.last_ver        = 7
     GAME.warmup_mode     = false
@@ -1621,18 +1622,16 @@ function make_player_row(c, opponent_uid, tag_override)
         return "<tr><td><table width=330 background='white:" .. bg .. "'><tr>" ..
                "<td width=6><img src='blank' width=6 height=5>" ..
                "<td align=left clip=1><div font='font-outline:18' color='" .. col .. "'>" ..
-               c.name .. sfx .. " [play]</div>" ..
+               c.name .. " (" .. tally_get(c.uid) .. ")" .. sfx .. " [play]</div>" ..
                "<div font='font-outline:11' color='#aaaaaa'>" .. elo_str:gsub("^ · ","") .. h2h_str .. "</div>" ..
-               "<td width=44 align=right><div font='font-outline:26' color='" .. col .. "'>" .. tally_get(c.uid) .. "</div>" ..
                "</table>"
     else
         local tag = tag_override or (c.is_host and "[host]" or "[away]")
         return "<tr><td><table width=330 background='white:#2b2b2b'><tr>" ..
                "<td width=6><img src='blank' width=6 height=5>" ..
                "<td align=left clip=1><div font='font-outline:18' color='#777777'>" ..
-               c.name .. " " .. tag .. "</div>" ..
+               c.name .. (c.is_host and "" or (" (" .. tally_get(c.uid) .. ")")) .. sfx .. " " .. tag .. "</div>" ..
                (info ~= "" and "<div font='font-outline:11' color='#555555'>" .. info:gsub("^ · ","") .. "</div>" or "") ..
-               (c.is_host and "" or ("<td width=44 align=right><div font='font-outline:26' color='#777777'>" .. tally_get(c.uid) .. "</div>")) ..
                "</table>"
     end
 end
@@ -1646,7 +1645,7 @@ function build_lobby_html(client)
         if GAME.batch_mode then
             batch_html = batch_html .. "<tr><td><input type='button' onclick='/endbatch' value='End Batch + Upload' class='ibutton1'/>"
         end
-        batch_html = batch_html .. "<tr><td><input type='button' onclick='/resetscores' value='Reset Scores' class='ibutton1'/>"
+        batch_html = batch_html .. "<tr><td><input type='button' onclick='/reset' value='Reset Scores' class='ibutton1'/>"
         return "<tr><td align=center><h2>1v1 Replays</h2>" .. build_event_lobby_html(client) .. batch_html
     end
     local queued    = count_queued()
@@ -1702,7 +1701,7 @@ function build_lobby_html(client)
         ]] .. rows .. [[
         <tr><td><p>&nbsp;</p>
     ]] .. batch_toggle_btn .. end_batch_btn
-        .. "<tr><td><input type='button' onclick='/resetscores' value='Reset Scores' class='ibutton1'/>"
+        .. "<tr><td><input type='button' onclick='/reset' value='Reset Scores' class='ibutton1'/>"
 end
 
 function build_status_html(client)
@@ -1775,10 +1774,14 @@ function build_status_html(client)
         -- Distance Change toggle
         html = html
             .. "<tr><td colspan=3><p>&nbsp;</p>"
-            .. "<tr><td colspan=3 align=center>"
-            .. "<input type='button' onclick='/toggle:distance' value='Distance Change: "
-            .. (GAME.distance_change and "ON ✓" or "OFF")
-            .. "' class='" .. (GAME.distance_change and "ibutton2" or "ibutton1") .. "' width=240/>"
+            .. "<tr><td colspan=3 align=center><table><tr>"
+            .. "<td><input type='button' onclick='/toggle:distance' value='Distance Change: "
+            .. (GAME.dc_mode == "on" and "ON ✓" or "OFF")
+            .. "' class='" .. (GAME.dc_mode == "on" and "ibutton2" or "ibutton1") .. "' width=200/>"
+            .. "<td><input type='button' onclick='/toggle:distance_random' value='50% Random"
+            .. (GAME.dc_mode == "random" and " ✓" or "")
+            .. "' class='" .. (GAME.dc_mode == "random" and "ibutton2" or "ibutton1") .. "' width=120/>"
+            .. "</table>"
             .. "<tr><td colspan=3><div font='font-gui2:12'><i>"
             .. "Within each cost tier, distance from home replaces the random roll: "
             .. "far from home = cheapest + highest prod, near home = priciest + lowest prod"
@@ -2340,7 +2343,7 @@ clients_assign_colors()
 net_send("", "message", e.name .. " is /away")
 broadcast_html()
 end
-elseif lv == "/resetscores" then
+elseif lv == "/reset" or lv == "/resetscores" then
 tally_reset(e.name)
 broadcast_html()
 elseif lv == "/elo" or lv:find("^/elo%s") == 1 then
@@ -2452,8 +2455,14 @@ if lv:sub(1,8) == "/toggle:" then
                     net_send("","message","ElimV2 map rotation " .. (GAME.ranked and "ON - map settings locked." or "OFF - custom map pool active."))
                 elseif what == "distance" then
                     if GAME.ranked then net_send("","message","Distance Change not available with ElimV2 rotation on.") return end
-                    GAME.distance_change = not GAME.distance_change
-                    net_send("","message","Distance Change: " .. (GAME.distance_change and "ON" or "OFF"))
+                    GAME.dc_mode = (GAME.dc_mode == "on") and "off" or "on"
+                    GAME.distance_change = (GAME.dc_mode == "on")
+                    net_send("","message","Distance Change: " .. (GAME.dc_mode == "on" and "ON (every game)" or "OFF"))
+                elseif what == "distance_random" then
+                    if GAME.ranked then net_send("","message","Distance Change not available with ElimV2 rotation on.") return end
+                    GAME.dc_mode = (GAME.dc_mode == "random") and "off" or "random"
+                    GAME.distance_change = false
+                    net_send("","message","Distance Change: " .. (GAME.dc_mode == "random" and "50% chance each game" or "OFF"))
                 elseif what == "stages" or what == "classic" or what == "philbuff" or what == "12p" or what == "wonk" then
                     if GAME.ranked then net_send("","message","Map settings locked while ElimV2 rotation is on.") return end
                     GAME.map_styles[what] = not GAME.map_styles[what]
@@ -2931,6 +2940,14 @@ for _, c in pairs(GAME.clients) do c.resumed = nil end
     end
 
     g2.game_reset()
+    -- Roll the 50% Distance Change BEFORE reseeding: the first number after
+    -- math.randomseed(os.time()) barely changes between games a few minutes
+    -- apart on some C runtimes, so it would come out the same way repeatedly.
+    if GAME.dc_mode == "random" then
+        GAME.distance_change = (math.random() < 0.5)
+    else
+        GAME.distance_change = (GAME.dc_mode == "on")
+    end
     math.randomseed(os.time())
     local neutral                    = g2.new_user("neutral", 0x444444)
 neutral.user_neutral             = 1
@@ -3075,7 +3092,9 @@ net_send("", "message", table.concat(names, " vs ") .. " -- GO!")
 local _ver_lbl = (GAME.last_style == "saandbuff") and (" V"..(GAME.last_ver or "?")) or ""
         local _stage_lbl = (GAME.game_mode == "stages") and " [STAGES]" or ""
 local _mode_lbl = (GAME.game_mode == "stages") and "  [STAGES]" or ""
-net_send("", "message", "Map: " .. GAME.last_style .. _ver_lbl .. _stage_lbl)
+net_send("", "message", "Map: " .. GAME.last_style .. _ver_lbl .. _stage_lbl
+    .. (GAME.distance_change and " + Distance Change" or "")
+    .. (GAME.dc_mode == "random" and (GAME.distance_change and " (50% roll: ON)" or " (50% roll: off)") or ""))
 net_send("", "sfx", "start")
 g2.state = "play"
 params_set("state", "play")
@@ -3246,9 +3265,9 @@ function build_spectator_html(p1,p2,ps,pp,es,ep,extra_rows)
 
     return "<table width=340>" ..
         "<tr>" ..
-            "<td align=left width=110><div font='font-outline:22' color='"..c1.."'>"..p1.title_value.."  "..tally_get(client_uid_of(p1)).."</div></td>" ..
+            "<td align=left width=110><div font='font-outline:22' color='"..c1.."'>"..p1.title_value.." ("..tally_get(client_uid_of(p1))..")</div></td>" ..
             "<td align=center width=120><div font='font-outline:20' color='"..p_light.."'>&#9679;</div></td>" ..
-            "<td align=right width=110><div font='font-outline:22' color='"..c2.."'>"..((p2 and p2~=p1) and (tally_get(client_uid_of(p2)).."  ") or "")..e_name.."</div></td>" ..
+            "<td align=right width=110><div font='font-outline:22' color='"..c2.."'>"..e_name..((p2 and p2~=p1) and (" ("..tally_get(client_uid_of(p2))..")") or "").."</div></td>" ..
         "</tr>" ..
         "<tr>" ..
             "<td align=left><div font='font-outline:20' color='"..c1.."'>Ships: "..ps.."</div></td>" ..
