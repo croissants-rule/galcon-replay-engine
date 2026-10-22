@@ -326,6 +326,27 @@ function elo_text(uid)
     return string.format("ELO: %d  %dW-%dL", s.elo, s.wins, s.losses)
 end
 
+-- ── Scoreboard tallies (viewing only) ─────────────────────────────────────
+-- A running score shown next to each player. Standard / winner stays on:
+-- +1 for every game won. Tournament / round robin: +1 only for the event
+-- winner(s). Kept in memory only -- never written to g2.data or replays, and
+-- it doesn't touch ELO. Reset with the lobby button or /resetscores.
+function tally_get(uid)
+    if uid == nil then return 0 end
+    return (GAME.tally and GAME.tally[tostring(uid)]) or 0
+end
+
+function tally_add(uid)
+    if uid == nil then return end
+    GAME.tally = GAME.tally or {}
+    GAME.tally[tostring(uid)] = tally_get(uid) + 1
+end
+
+function tally_reset(by)
+    GAME.tally = {}
+    net_send("", "message", "Scores reset by " .. (by or "?") .. ".")
+end
+
 -- /elo        -> your own rating
 -- /elo name   -> anyone's rating (exact name first, then partial match)
 function elo_command(uid, query)
@@ -655,6 +676,7 @@ function tourney_advance(ev)
     end
     ev.done = true
     ev.champion = alive[1]
+    if ev.champion then tally_add(ev.champion) end
     if ev.champion then
         local beat = ev.beat[ev.champion] or {}
         local names = {}
@@ -770,6 +792,7 @@ function rr_advance(ev)
         for _, uid in ipairs(tied) do if h2h[uid] == best then winners[#winners + 1] = uid end end
     end
     ev.champions = winners
+    for _, uid in ipairs(winners) do tally_add(uid) end
     local label = (ev.kind == "drr") and "DOUBLE ROUND ROBIN" or "ROUND ROBIN"
     local parts = {}
     for i, uid in ipairs(st) do
@@ -1281,6 +1304,7 @@ function init()
     for i = 1, 13 do GAME.map_styles.sb[i] = true end  -- all SaandBuff versions on by default
     GAME.game_mode   = "standard"  
     GAME.room_mode   = "standard"   -- standard / wso / tourney / rr / drr (see ROOM MODES)
+    GAME.tally       = {}           -- scoreboard tallies (viewing only, see tally_add)
 
     global("rec_clock");        rec_clock        = 0
     global("rec_frame");        rec_frame        = 0
@@ -1599,6 +1623,7 @@ function make_player_row(c, opponent_uid, tag_override)
                "<td align=left clip=1><div font='font-outline:18' color='" .. col .. "'>" ..
                c.name .. sfx .. " [play]</div>" ..
                "<div font='font-outline:11' color='#aaaaaa'>" .. elo_str:gsub("^ · ","") .. h2h_str .. "</div>" ..
+               "<td width=44 align=right><div font='font-outline:26' color='" .. col .. "'>" .. tally_get(c.uid) .. "</div>" ..
                "</table>"
     else
         local tag = tag_override or (c.is_host and "[host]" or "[away]")
@@ -1607,6 +1632,7 @@ function make_player_row(c, opponent_uid, tag_override)
                "<td align=left clip=1><div font='font-outline:18' color='#777777'>" ..
                c.name .. " " .. tag .. "</div>" ..
                (info ~= "" and "<div font='font-outline:11' color='#555555'>" .. info:gsub("^ · ","") .. "</div>" or "") ..
+               (c.is_host and "" or ("<td width=44 align=right><div font='font-outline:26' color='#777777'>" .. tally_get(c.uid) .. "</div>")) ..
                "</table>"
     end
 end
@@ -1620,6 +1646,7 @@ function build_lobby_html(client)
         if GAME.batch_mode then
             batch_html = batch_html .. "<tr><td><input type='button' onclick='/endbatch' value='End Batch + Upload' class='ibutton1'/>"
         end
+        batch_html = batch_html .. "<tr><td><input type='button' onclick='/resetscores' value='Reset Scores' class='ibutton1'/>"
         return "<tr><td align=center><h2>1v1 Replays</h2>" .. build_event_lobby_html(client) .. batch_html
     end
     local queued    = count_queued()
@@ -1675,6 +1702,7 @@ function build_lobby_html(client)
         ]] .. rows .. [[
         <tr><td><p>&nbsp;</p>
     ]] .. batch_toggle_btn .. end_batch_btn
+        .. "<tr><td><input type='button' onclick='/resetscores' value='Reset Scores' class='ibutton1'/>"
 end
 
 function build_status_html(client)
@@ -2312,6 +2340,9 @@ clients_assign_colors()
 net_send("", "message", e.name .. " is /away")
 broadcast_html()
 end
+elseif lv == "/resetscores" then
+tally_reset(e.name)
+broadcast_html()
 elseif lv == "/elo" or lv:find("^/elo%s") == 1 then
 elo_command(e.uid, (v:gsub("^%s+",""):sub(5):gsub("^%s+",""):gsub("%s+$","")))
 elseif lv == "/who" then
@@ -2670,6 +2701,15 @@ pcall(function()
             if not ok_s then print("[ERROR] stats_save: " .. tostring(err_s)) end
         end
         net_send("", "message", winner_user.title_value .. " conquered the galaxy!")
+        local mode = GAME.room_mode or "standard"
+        if mode == "standard" or mode == "wso" then
+            tally_add(winner_uid)
+            local lu = nil
+            for _, uid in ipairs(GAME.player_uids or {}) do if uid ~= winner_uid then lu = uid end end
+            local ln = lu and ((GAME.clients[lu] and GAME.clients[lu].name) or (STATS[lu] and STATS[lu].name)) or nil
+            net_send("", "message", "Score: " .. winner_user.title_value .. " " .. tally_get(winner_uid)
+                .. (ln and ("  -  " .. ln .. " " .. tally_get(lu)) or ""))
+        end
     else
         net_send("", "message", "Game over.")
     end
@@ -3206,9 +3246,9 @@ function build_spectator_html(p1,p2,ps,pp,es,ep,extra_rows)
 
     return "<table width=340>" ..
         "<tr>" ..
-            "<td align=left width=110><div font='font-outline:22' color='"..c1.."'>"..p1.title_value.."</div></td>" ..
+            "<td align=left width=110><div font='font-outline:22' color='"..c1.."'>"..p1.title_value.."  "..tally_get(client_uid_of(p1)).."</div></td>" ..
             "<td align=center width=120><div font='font-outline:20' color='"..p_light.."'>&#9679;</div></td>" ..
-            "<td align=right width=110><div font='font-outline:22' color='"..c2.."'>"..e_name.."</div></td>" ..
+            "<td align=right width=110><div font='font-outline:22' color='"..c2.."'>"..((p2 and p2~=p1) and (tally_get(client_uid_of(p2)).."  ") or "")..e_name.."</div></td>" ..
         "</tr>" ..
         "<tr>" ..
             "<td align=left><div font='font-outline:20' color='"..c1.."'>Ships: "..ps.."</div></td>" ..
