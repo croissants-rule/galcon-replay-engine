@@ -331,6 +331,810 @@ end
 local HOST_UID  = nil   
 local HOST_NAME = nil   
 
+-- ══ ROOM MODES ═══════════════════════════════════════════════════════════
+-- standard : the original 1v1 room (2 queued players, START or 2nd /play starts)
+-- wso      : winner stays on. Everyone who /plays joins a line. The winner
+--            keeps playing; the loser goes to the back of the line (away) and
+--            the front of the line challenges next. With 2 players it is just
+--            the same two again.
+-- tourney  : single elimination. Random bracket, odd player out gets a bye
+--            (never the same player twice in a row when avoidable), winners
+--            advance until a final decides it. Every match is an ordinary
+--            recorded game -- nothing about the final is special.
+-- rr / drr : round robin / double round robin. Everyone plays everyone once
+--            (twice, with sides swapped, for double). Most wins takes it
+--            (head-to-head among the tied players breaks ties).
+-- Every event game is a normal game: same recording, same ELO handling.
+-- State lives under GAME: room_mode, wso, ev (active event), ev_last,
+-- ev_names. A client in an event/line has c.rot = true; the two players in
+-- the next match are status "queue", every other client is "away".
+local ROOM_MODE_ORDER = { "standard", "wso", "tourney", "rr", "drr" }
+local ROOM_MODE_LABEL = {
+    standard = "Standard", wso = "Winner Stays On", tourney = "Tournament",
+    rr = "Round Robin", drr = "Double Round Robin",
+}
+local ROOM_MODE_BTN = {
+    standard = "Standard", wso = "Winner Stays", tourney = "Tournament",
+    rr = "Round Robin", drr = "Double RR",
+}
+local ROOM_MODE_HELP = {
+    standard = "Normal 1v1 room: two players queue and play.",
+    wso      = "Winner keeps playing. The loser goes to the back of the line and the next player in line challenges.",
+    tourney  = "Single elimination bracket. Odd player out gets a bye. Winners advance until the final.",
+    rr       = "Everyone plays everyone once. Most wins takes it.",
+    drr      = "Everyone plays everyone twice (sides swapped). Most wins takes it.",
+}
+
+function is_event_mode() return (GAME.room_mode or "standard") ~= "standard" end
+function is_bracket_mode()
+    local m = GAME.room_mode
+    return m == "tourney" or m == "rr" or m == "drr"
+end
+function ev_active() return GAME.ev ~= nil and not GAME.ev.done end
+
+function ev_say(msg) net_send("", "message", msg) end
+
+function ev_name(uid)
+    local c = GAME.clients[uid]
+    if c then return c.name end
+    return (GAME.ev_names and GAME.ev_names[uid]) or "?"
+end
+
+function ev_remember(uid)
+    GAME.ev_names = GAME.ev_names or {}
+    local c = GAME.clients[uid]
+    if c then GAME.ev_names[uid] = c.name end
+end
+
+function ev_present(uid)
+    local c = GAME.clients[uid]
+    return c ~= nil and c.rot == true and not c.is_host
+end
+
+function ev_shuffle(t)
+    for i = #t, 2, -1 do
+        local j = math.random(1, i)
+        t[i], t[j] = t[j], t[i]
+    end
+    return t
+end
+
+function ev_index(list, v)
+    for i, x in ipairs(list) do if x == v then return i end end
+    return nil
+end
+
+-- Clients who have joined the line/event pool, in room join order.
+function pool_uids()
+    local out = {}
+    for _, uid in ipairs(GAME.client_order) do
+        local c = GAME.clients[uid]
+        if c and c.rot and not c.is_host then out[#out + 1] = uid end
+    end
+    return out
+end
+
+-- ── Winner stays on ─────────────────────────────────────────────────────
+function wso_state()
+    if not GAME.wso then GAME.wso = { champ = nil, line = {}, streak = 0 } end
+    return GAME.wso
+end
+
+-- Drop anyone who left or stepped away; append pool members not yet in line.
+function wso_clean()
+    local w = wso_state()
+    if w.champ and not ev_present(w.champ) then w.champ = nil; w.streak = 0 end
+    local line = {}
+    for _, uid in ipairs(w.line) do
+        if ev_present(uid) and uid ~= w.champ and not ev_index(line, uid) then line[#line + 1] = uid end
+    end
+    for _, uid in ipairs(pool_uids()) do
+        if uid ~= w.champ and not ev_index(line, uid) then line[#line + 1] = uid end
+    end
+    w.line = line
+end
+
+function wso_pair()
+    local w = wso_state()
+    wso_clean()
+    if w.champ then return w.champ, w.line[1] end
+    return w.line[1], w.line[2]
+end
+
+function wso_on_result(winner, a, b)
+    local w = wso_state()
+    if not winner then
+        ev_say("Match not counted -- same two play again.")
+        return
+    end
+    local loser = (winner == a) and b or a
+    local old_champ = w.champ
+    if old_champ == winner then w.streak = (w.streak or 0) + 1 else w.streak = 1 end
+    -- Take both players out of the line, crown the winner, send the loser to the back.
+    local line = {}
+    for _, uid in ipairs(w.line) do
+        if uid ~= a and uid ~= b then line[#line + 1] = uid end
+    end
+    w.champ = winner
+    if loser and ev_present(loser) then line[#line + 1] = loser end
+    w.line = line
+    wso_clean()
+    if old_champ and old_champ ~= winner and loser == old_champ then
+        ev_say(ev_name(winner) .. " dethrones " .. ev_name(loser) .. "!")
+    elseif w.streak >= 2 then
+        ev_say(ev_name(winner) .. " stays on -- " .. w.streak .. " wins in a row.")
+    end
+end
+
+-- ── Tournament (single elimination) ─────────────────────────────────────
+function tourney_round_name(n_alive)
+    if n_alive <= 2 then return "Final" end
+    if n_alive <= 4 then return "Semifinals" end
+    if n_alive <= 8 then return "Quarterfinals" end
+    return nil
+end
+
+function tourney_build_round(ev, alive)
+    ev.matches, ev.cur, ev.bye = {}, 1, nil
+    local list = {}
+    for i, uid in ipairs(alive) do list[i] = uid end
+    if #list % 2 == 1 then
+        -- Bye goes to the last player (from the end) who hasn't had one.
+        local pick = #list
+        for i = #list, 1, -1 do
+            if not ev.had_bye[list[i]] then pick = i; break end
+        end
+        ev.bye = table.remove(list, pick)
+        ev.had_bye[ev.bye] = true
+    end
+    for i = 1, #list - 1, 2 do
+        ev.matches[#ev.matches + 1] = { a = list[i], b = list[i + 1] }
+    end
+    ev.round_label = tourney_round_name(#alive) or ("Round " .. ev.round)
+    local parts = {}
+    for _, m in ipairs(ev.matches) do parts[#parts + 1] = ev_name(m.a) .. " vs " .. ev_name(m.b) end
+    ev_say("[TOURNAMENT] " .. ev.round_label .. ": " .. table.concat(parts, ", ")
+        .. (ev.bye and (" -- bye: " .. ev_name(ev.bye)) or ""))
+end
+
+-- Called whenever a match is decided or a player drops out. Settles
+-- walkovers, and when the round is complete, builds the next one or
+-- crowns the champion.
+function tourney_advance(ev)
+    for _, m in ipairs(ev.matches) do
+        if not m.winner and not m.void and not m.live then
+            local ga, gb = ev.gone[m.a], ev.gone[m.b]
+            if ga and gb then
+                m.void = true
+            elseif ga or gb then
+                m.winner = ga and m.b or m.a
+                m.loser  = ga and m.a or m.b
+                m.walkover = true
+                ev.out[m.loser] = true
+                ev_say("[TOURNAMENT] " .. ev_name(m.winner) .. " advances -- "
+                    .. ev_name(m.loser) .. " is out (walkover).")
+            end
+        end
+    end
+    if ev.bye and ev.gone[ev.bye] then ev.bye = nil end
+    ev.cur = nil
+    for i, m in ipairs(ev.matches) do
+        if not m.winner and not m.void then ev.cur = i; break end
+    end
+    if ev.cur then return end
+    -- Round complete.
+    local alive = {}
+    for _, m in ipairs(ev.matches) do
+        if m.winner and not ev.gone[m.winner] then alive[#alive + 1] = m.winner end
+    end
+    if ev.bye then alive[#alive + 1] = ev.bye end
+    if #alive >= 2 then
+        ev.round = ev.round + 1
+        tourney_build_round(ev, alive)
+        tourney_advance(ev)   -- a player may already be gone
+        return
+    end
+    ev.done = true
+    ev.champion = alive[1]
+    if ev.champion then
+        local beat = ev.beat[ev.champion] or {}
+        local names = {}
+        for _, uid in ipairs(beat) do names[#names + 1] = ev_name(uid) end
+        ev_say("==============================")
+        ev_say("*** " .. ev_name(ev.champion) .. " WINS THE TOURNAMENT! ***")
+        if #names > 0 then ev_say("Path: beat " .. table.concat(names, ", ")) end
+        ev_say("==============================")
+    else
+        ev_say("[TOURNAMENT] Ended with no winner (everyone left).")
+    end
+end
+
+-- ── Round robin / double round robin ────────────────────────────────────
+-- Circle method: one player fixed, the rest rotate, so every round has
+-- everyone playing once and nobody waits long between games. Sides
+-- alternate so nobody is always P1. Double adds a second leg with sides
+-- swapped.
+-- Reorder so nobody plays two games in a row when it can be avoided:
+-- always take the earliest remaining match that shares no player with
+-- the previous one (falls back to the earliest if every one does).
+function rr_spread(list, prev)
+    local rest, out = {}, {}
+    for i, m in ipairs(list) do rest[i] = m end
+    while #rest > 0 do
+        local pick = 1
+        if prev then
+            for i, m in ipairs(rest) do
+                if m.a ~= prev.a and m.a ~= prev.b and m.b ~= prev.a and m.b ~= prev.b then pick = i; break end
+            end
+        end
+        prev = table.remove(rest, pick)
+        out[#out + 1] = prev
+    end
+    return out
+end
+
+function rr_build(ev, players, double)
+    local arr = {}
+    for i, uid in ipairs(players) do arr[i] = uid end
+    ev_shuffle(arr)
+    if #arr % 2 == 1 then arr[#arr + 1] = false end   -- false = bye slot
+    local n, half = #arr, math.floor(#arr / 2)
+    ev.matches = {}
+    for r = 1, n - 1 do
+        for i = 1, half do
+            local a, b = arr[i], arr[n + 1 - i]
+            if a and b then
+                if (r + i) % 2 == 0 then a, b = b, a end
+                ev.matches[#ev.matches + 1] = { a = a, b = b, leg = 1 }
+            end
+        end
+        local last = table.remove(arr, n)
+        table.insert(arr, 2, last)
+    end
+    local leg1 = rr_spread(ev.matches, nil)
+    ev.matches = leg1
+    if double then
+        local leg2 = {}
+        for i, m in ipairs(leg1) do leg2[i] = { a = m.b, b = m.a, leg = 2 } end
+        leg2 = rr_spread(leg2, leg1[#leg1])
+        for _, m in ipairs(leg2) do ev.matches[#ev.matches + 1] = m end
+    end
+    ev.wins, ev.losses = {}, {}
+    for _, uid in ipairs(players) do ev.wins[uid] = 0; ev.losses[uid] = 0 end
+    ev.cur = 1
+end
+
+-- Players ordered by wins (desc), then fewer losses, then name.
+function rr_standings(ev)
+    local list = {}
+    for _, uid in ipairs(ev.players) do list[#list + 1] = uid end
+    table.sort(list, function(x, y)
+        local wx, wy = ev.wins[x] or 0, ev.wins[y] or 0
+        if wx ~= wy then return wx > wy end
+        local lx, ly = ev.losses[x] or 0, ev.losses[y] or 0
+        if lx ~= ly then return lx < ly end
+        return ev_name(x):lower() < ev_name(y):lower()
+    end)
+    return list
+end
+
+function rr_advance(ev)
+    for _, m in ipairs(ev.matches) do
+        if not m.winner and not m.void and not m.live and (ev.gone[m.a] or ev.gone[m.b]) then
+            m.void = true
+            ev.dropped = (ev.dropped or 0) + 1
+        end
+    end
+    ev.cur = nil
+    for i, m in ipairs(ev.matches) do
+        if not m.winner and not m.void then ev.cur = i; break end
+    end
+    if ev.cur then return end
+    ev.done = true
+    -- Winner(s): most wins; ties broken by wins in games between the tied players.
+    local st = rr_standings(ev)
+    local present = {}
+    for _, uid in ipairs(st) do if not ev.gone[uid] then present[#present + 1] = uid end end
+    if #present == 0 then present = st end
+    local top = ev.wins[present[1]] or 0
+    local tied = {}
+    for _, uid in ipairs(present) do if (ev.wins[uid] or 0) == top then tied[#tied + 1] = uid end end
+    local winners = tied
+    if #tied > 1 then
+        local h2h, best = {}, -1
+        for _, uid in ipairs(tied) do h2h[uid] = 0 end
+        for _, m in ipairs(ev.matches) do
+            if m.winner and h2h[m.a] and h2h[m.b] then h2h[m.winner] = h2h[m.winner] + 1 end
+        end
+        for _, uid in ipairs(tied) do if h2h[uid] > best then best = h2h[uid] end end
+        winners = {}
+        for _, uid in ipairs(tied) do if h2h[uid] == best then winners[#winners + 1] = uid end end
+    end
+    ev.champions = winners
+    local label = (ev.kind == "drr") and "DOUBLE ROUND ROBIN" or "ROUND ROBIN"
+    local parts = {}
+    for i, uid in ipairs(st) do
+        parts[#parts + 1] = i .. ". " .. ev_name(uid) .. " " .. (ev.wins[uid] or 0) .. "-" .. (ev.losses[uid] or 0)
+    end
+    ev_say("==============================")
+    if #winners == 1 then
+        local w = winners[1]
+        ev_say("*** " .. ev_name(w) .. " WINS THE " .. label .. "! *** ("
+            .. (ev.wins[w] or 0) .. "-" .. (ev.losses[w] or 0) .. ")")
+        if #tied > 1 then ev_say("(Tiebreak: head-to-head)") end
+    else
+        local names = {}
+        for _, uid in ipairs(winners) do names[#names + 1] = ev_name(uid) end
+        ev_say("*** " .. table.concat(names, " & ") .. " SHARE THE " .. label .. "! *** (" .. top .. " wins each)")
+    end
+    ev_say("Final: " .. table.concat(parts, "   "))
+    ev_say("==============================")
+end
+
+function ev_advance(ev)
+    if ev.kind == "tourney" then tourney_advance(ev) else rr_advance(ev) end
+    if ev.done then
+        GAME.ev_last = ev
+        GAME.ev = nil
+    end
+end
+
+function ev_games_total(ev)
+    local n = 0
+    for _, m in ipairs(ev.matches) do if not m.void then n = n + 1 end end
+    return n
+end
+
+function ev_games_played(ev)
+    local n = 0
+    for _, m in ipairs(ev.matches) do if m.winner and not m.walkover then n = n + 1 end end
+    return n
+end
+
+-- ── Event lifecycle ─────────────────────────────────────────────────────
+function ev_start()
+    local pool = pool_uids()
+    if #pool < 2 then
+        return false, "Need at least 2 players -- type /play to join."
+    end
+    for _, uid in ipairs(pool) do ev_remember(uid) end
+    local kind = GAME.room_mode
+    local ev = { kind = kind, players = pool, gone = {}, out = {}, beat = {}, round = 1, had_bye = {} }
+    GAME.ev_last = nil
+    if kind == "tourney" then
+        local order = {}
+        for i, uid in ipairs(pool) do order[i] = uid end
+        ev_shuffle(order)
+        GAME.ev = ev
+        tourney_build_round(ev, order)
+    else
+        rr_build(ev, pool, kind == "drr")
+        GAME.ev = ev
+        local names = {}
+        for _, uid in ipairs(pool) do names[#names + 1] = ev_name(uid) end
+        ev_say("[" .. ROOM_MODE_LABEL[kind]:upper() .. "] " .. #pool .. " players, "
+            .. #ev.matches .. " games: " .. table.concat(names, ", "))
+    end
+    return true
+end
+
+function ev_cancel(by)
+    if GAME.room_mode == "wso" then
+        local w = wso_state()
+        w.champ, w.streak = nil, 0
+        ev_say("Winner-stays-on reset by " .. by .. " -- line kept, no champion.")
+        return
+    end
+    if not ev_active() then return end
+    GAME.ev = nil
+    ev_say(ROOM_MODE_LABEL[GAME.room_mode] .. " cancelled by " .. by .. ".")
+end
+
+-- The two uids who play next, or nil.
+function ev_next_pair()
+    if GAME.room_mode == "wso" then return wso_pair() end
+    local ev = GAME.ev
+    if not ev or ev.done or not ev.cur then return nil end
+    local m = ev.matches[ev.cur]
+    if not m then return nil end
+    return m.a, m.b
+end
+
+-- Mark exactly the next match's two players "queue", everyone else "away".
+-- Never touches anyone currently in a game unless `force` (galcon_stop,
+-- which has already moved them back out of "play").
+function ev_apply_statuses(force)
+    if not is_event_mode() then return end
+    if g2.state == "play" and not force then return end
+    local a, b = ev_next_pair()
+    for uid, c in pairs(GAME.clients) do
+        if not c.is_host and (force or c.status ~= "play") then
+            c.status = (uid == a or uid == b) and "queue" or "away"
+        end
+    end
+    clients_assign_colors()
+end
+
+function ev_match_label()
+    local mode = GAME.room_mode
+    if mode == "wso" then
+        local w = wso_state()
+        return "Winner stays on" .. ((w.champ and (w.streak or 0) > 0) and (" (champion streak " .. w.streak .. ")") or "")
+    end
+    local ev = GAME.ev
+    if not ev or not ev.cur then return "" end
+    if ev.kind == "tourney" then
+        local k, n = 0, 0
+        for i, m in ipairs(ev.matches) do
+            if not m.void and not m.walkover then
+                n = n + 1
+                if i <= ev.cur then k = k + 1 end
+            end
+        end
+        return "Tournament - " .. ev.round_label .. (n > 1 and (" match " .. k .. "/" .. n) or "")
+    end
+    return ROOM_MODE_LABEL[ev.kind] .. " - game " .. (ev_games_played(ev) + 1) .. "/" .. ev_games_total(ev)
+end
+
+-- Called from the galcon module once the two players are in the game.
+function ev_on_game_start(uids)
+    GAME.ev_game_label = nil
+    if not is_event_mode() then return end
+    GAME.ev_game_label = ev_match_label()
+    local ev = GAME.ev
+    if not ev or not ev.cur then return end
+    local m = ev.matches[ev.cur]
+    local a, b = uids[1], uids[2]
+    if m and ((m.a == a and m.b == b) or (m.a == b and m.b == a)) then
+        m.live = true
+        ev.live = ev.cur
+    end
+end
+
+-- Called from galcon_stop with the winner (nil = no result) and both uids.
+function ev_on_result(winner, uids)
+    if not is_event_mode() then return end
+    local a, b = uids and uids[1], uids and uids[2]
+    if GAME.room_mode == "wso" then
+        if a and b then wso_on_result(winner, a, b) end
+    else
+        local ev = GAME.ev
+        if ev and ev.live then
+            local m = ev.matches[ev.live]
+            m.live, ev.live = nil, nil
+            if winner and (winner == m.a or winner == m.b) then
+                m.winner = winner
+                m.loser  = (winner == m.a) and m.b or m.a
+                if ev.kind == "tourney" then ev.out[m.loser] = true end
+                ev.beat[winner] = ev.beat[winner] or {}
+                table.insert(ev.beat[winner], m.loser)
+                if ev.wins then
+                    ev.wins[winner] = (ev.wins[winner] or 0) + 1
+                    ev.losses[m.loser] = (ev.losses[m.loser] or 0) + 1
+                end
+                if ev.kind == "tourney" then
+                    ev_say("[TOURNAMENT] " .. ev_name(winner) .. " advances, " .. ev_name(m.loser) .. " is out.")
+                end
+            elseif not (ev.gone[m.a] or ev.gone[m.b]) then
+                ev_say("Match not counted -- it will be replayed.")
+            end
+            ev_advance(ev)
+        end
+    end
+    -- Players who typed /away during their own game step out now, before
+    -- the next match is announced.
+    for _, uid in ipairs({ a, b }) do
+        local c = uid and GAME.clients[uid]
+        if c and c.withdraw_after then
+            c.withdraw_after = nil
+            ev_withdraw(uid, c.name .. " stepped out.")
+        end
+    end
+    local na, nb = ev_next_pair()
+    if na and nb then
+        local lbl = (GAME.room_mode == "wso") and "" or (" (" .. ev_match_label() .. ")")
+        ev_say("Next: " .. ev_name(na) .. " vs " .. ev_name(nb) .. lbl .. ". Press START.")
+    end
+end
+
+-- Player leaves the pool (typed /away, or left the room).
+function ev_withdraw(uid, msg)
+    local c = GAME.clients[uid]
+    if c then c.rot = nil end
+    if msg then ev_say(msg) end
+    if GAME.room_mode == "wso" then
+        wso_clean()
+        return
+    end
+    local ev = GAME.ev
+    if not ev or ev.done or not ev_index(ev.players, uid) then return end
+    ev.gone[uid] = true
+    if ev.live then
+        local m = ev.matches[ev.live]
+        if m and (m.a == uid or m.b == uid) then return end   -- the game's result settles it
+    end
+    ev_advance(ev)
+end
+
+function ev_on_join(uid)
+    local c = GAME.clients[uid]
+    if not c or c.is_host then return end
+    c.status = "away"
+    if GAME.room_mode == "wso" then
+        c.rot = true
+        ev_remember(uid)
+        wso_clean()
+        net_send(uid, "message", "Winner Stays On -- you're in the line. /away to sit out.")
+    elseif ev_active() then
+        net_send(uid, "message", ROOM_MODE_LABEL[GAME.room_mode] .. " in progress -- you can watch; /play joins the next one.")
+    else
+        c.rot = true
+        ev_remember(uid)
+        net_send(uid, "message", ROOM_MODE_LABEL[GAME.room_mode] .. " -- you're in. /away to sit out.")
+    end
+end
+
+-- /play in an event mode.
+function ev_on_play(uid)
+    local c = GAME.clients[uid]
+    if not c or c.is_host then return end
+    if c.rot then
+        net_send(uid, "message", "You're already in.")
+        return
+    end
+    if is_bracket_mode() and ev_active() then
+        net_send(uid, "message", ROOM_MODE_LABEL[GAME.room_mode] .. " in progress -- you'll be in the next one.")
+        c.rot = true
+        ev_remember(uid)
+        return
+    end
+    c.rot = true
+    ev_remember(uid)
+    if GAME.room_mode == "wso" then
+        wso_clean()
+        local pos = ev_index(wso_state().line, uid) or 0
+        ev_say(c.name .. " joined the line (#" .. pos .. ").")
+    else
+        ev_say(c.name .. " joined (" .. #pool_uids() .. " in).")
+    end
+    ev_apply_statuses()
+end
+
+-- /away in an event mode.
+function ev_on_away(uid)
+    local c = GAME.clients[uid]
+    if not c or c.is_host then return end
+    if c.status == "play" then
+        c.withdraw_after = true
+        net_send(uid, "message", "You'll step out after this game.")
+        return
+    end
+    if not c.rot then
+        c.status = "away"
+        return
+    end
+    local in_event = is_bracket_mode() and ev_active() and ev_index(GAME.ev.players, uid)
+    ev_withdraw(uid, c.name .. (in_event and " withdrew -- remaining matches forfeited." or " stepped out."))
+    c.status = "away"
+    ev_apply_statuses()
+end
+
+function ev_on_leave(uid)
+    if not is_event_mode() then return end
+    ev_withdraw(uid, nil)
+    ev_apply_statuses()
+end
+
+function set_room_mode(mode, by)
+    if not ROOM_MODE_LABEL[mode] then return end
+    local old = GAME.room_mode or "standard"
+    if mode == old then return end
+    if ev_active() then
+        ev_say("Finish or end the current " .. ROOM_MODE_LABEL[old] .. " before changing modes.")
+        return
+    end
+    -- Carry everyone who's playing/queued/in a line into the new mode.
+    for _, c in pairs(GAME.clients) do
+        if not c.is_host and (c.status == "queue" or c.rot) then c.rot = true; ev_remember(c.uid) end
+    end
+    GAME.room_mode = mode
+    GAME.wso = nil
+    GAME.ev_last = nil
+    if mode == "standard" then
+        local kept = 0
+        for _, uid in ipairs(GAME.client_order) do
+            local c = GAME.clients[uid]
+            if c and not c.is_host then
+                if c.rot and kept < 2 then c.status = "queue"; kept = kept + 1 else c.status = "away" end
+                c.rot = nil
+            end
+        end
+        clients_assign_colors()
+    else
+        ev_apply_statuses()
+    end
+    ev_say("Room mode: " .. ROOM_MODE_LABEL[mode] .. " (set by " .. by .. "). " .. ROOM_MODE_HELP[mode])
+    if is_bracket_mode() then ev_say(#pool_uids() .. " in -- /play to join, then START to begin.") end
+end
+
+-- START pressed in an event mode. Returns true when a match countdown should begin.
+function ev_on_start(by)
+    if GAME.room_mode == "wso" then
+        local a, b = wso_pair()
+        if not (a and b) then
+            ev_say("Winner Stays On needs 2 players in the line -- /play to join.")
+            return false
+        end
+        ev_apply_statuses()
+        return true
+    end
+    if not ev_active() then
+        local ok, err = ev_start()
+        if not ok then ev_say(err); return false end
+    end
+    if not ev_next_pair() then return false end
+    ev_apply_statuses()
+    local a, b = ev_next_pair()
+    ev_say("Up now: " .. ev_name(a) .. " vs " .. ev_name(b) .. " (" .. ev_match_label() .. ")")
+    return true
+end
+
+-- ── Lobby / settings HTML ───────────────────────────────────────────────
+local EV_TXT = "font='font-gui2:13' color='#cccccc'"
+local EV_HEAD = "font='font-outline:14' color='#44ccff'"
+local EV_DIM = "font='font-gui2:12' color='#888888'"
+
+function ev_line(text, attrs)
+    return "<tr><td><div " .. (attrs or EV_TXT) .. ">" .. text .. "</div>"
+end
+
+function ev_bracket_html(ev)
+    local h = ev_line(ev.round_label .. (ev.round > 1 and (" (round " .. ev.round .. ")") or ""), EV_HEAD)
+    for i, m in ipairs(ev.matches) do
+        local res
+        if m.void then res = "void"
+        elseif m.walkover then res = ev_name(m.winner) .. " (walkover)"
+        elseif m.winner then res = ev_name(m.winner) .. " won"
+        elseif m.live then res = "LIVE"
+        elseif i == ev.cur then res = "next"
+        else res = "" end
+        h = h .. ev_line(ev_name(m.a) .. " vs " .. ev_name(m.b) .. (res ~= "" and ("  --  " .. res) or ""))
+    end
+    if ev.bye then h = h .. ev_line("Bye: " .. ev_name(ev.bye), EV_DIM) end
+    return h
+end
+
+function ev_standings_html(ev)
+    local h = ev_line(ROOM_MODE_LABEL[ev.kind] .. " -- game " .. math.min(ev_games_played(ev) + (ev.done and 0 or 1), ev_games_total(ev))
+        .. " of " .. ev_games_total(ev), EV_HEAD)
+    for i, uid in ipairs(rr_standings(ev)) do
+        h = h .. ev_line(i .. ". " .. ev_name(uid) .. "   " .. (ev.wins[uid] or 0) .. "-" .. (ev.losses[uid] or 0)
+            .. (ev.gone[uid] and "  (left)" or ""))
+    end
+    if ev.dropped and ev.dropped > 0 then
+        h = h .. ev_line(ev.dropped .. " game(s) dropped -- player left", EV_DIM)
+    end
+    return h
+end
+
+function ev_player_tag(uid)
+    if GAME.room_mode == "wso" then
+        local k = ev_index(wso_state().line, uid)
+        return k and ("[line #" .. k .. "]") or "[in]"
+    end
+    local ev = GAME.ev
+    if ev and not ev.done then
+        if not ev_index(ev.players, uid) then return "[next event]" end
+        if ev.out[uid] then return "[out]" end
+        if ev.bye == uid then return "[bye]" end
+    end
+    return "[in]"
+end
+
+function build_event_lobby_html(client)
+    local mode = GAME.room_mode
+    local a, b = ev_next_pair()
+    local h = "<tr><td align=center><div " .. EV_HEAD .. ">Mode: " .. ROOM_MODE_LABEL[mode] .. "</div>"
+
+    local start_label = nil
+    if mode == "wso" then
+        if a and b then start_label = "START: " .. ev_name(a) .. " vs " .. ev_name(b) end
+    elseif ev_active() then
+        if a and b then start_label = "START NEXT MATCH" end
+    elseif #pool_uids() >= 2 then
+        start_label = "START " .. ROOM_MODE_LABEL[mode]:upper()
+    end
+    if start_label then
+        h = h .. "<tr><td><input type='button' value='" .. start_label .. "' onclick='/start' icon='icon-play'/>"
+    end
+    if not (client.is_host == true) then
+        local in_cls = client.rot and "ibutton2" or "ibutton1"
+        local out_cls = client.rot and "ibutton1" or "ibutton2"
+        h = h .. "<tr><td><input type='button' value='" .. (client.rot and "IN" or "JOIN") .. "' onclick='/play' icon='icon-play' class='" .. in_cls .. "'/>"
+            .. "<tr><td><input type='button' value='SIT OUT' onclick='/away' icon='icon-away' class='" .. out_cls .. "'/>"
+            .. "<tr><td><input type='button' value='GG' onclick='/gg' icon='icon-leave' class='ibutton1'/>"
+    end
+    h = h .. "<tr><td><p>&nbsp;</p>"
+
+    -- Next match
+    if a and b then
+        h = h .. "<tr><td><h2>NEXT MATCH</h2>"
+        local ca, cb = GAME.clients[a], GAME.clients[b]
+        if ca then h = h .. make_player_row(ca, b) end
+        if cb then h = h .. make_player_row(cb, a) end
+        h = h .. "<tr><td><p>&nbsp;</p>"
+    end
+
+    -- Event detail
+    if mode == "wso" then
+        local w = wso_state()
+        if w.champ then
+            h = h .. ev_line("Champion: " .. ev_name(w.champ) .. ((w.streak or 0) > 0 and ("  (" .. w.streak .. " in a row)") or ""), EV_HEAD)
+        end
+        if #w.line > 0 then
+            h = h .. ev_line("Line:", EV_HEAD)
+            for i, uid in ipairs(w.line) do h = h .. ev_line(i .. ". " .. ev_name(uid)) end
+        end
+    else
+        local ev = GAME.ev or GAME.ev_last
+        if ev then
+            if ev.kind == "tourney" then h = h .. ev_bracket_html(ev) else h = h .. ev_standings_html(ev) end
+            if ev.done then
+                local w = ev.champion and ev_name(ev.champion)
+                if ev.champions then
+                    local names = {}
+                    for _, uid in ipairs(ev.champions) do names[#names + 1] = ev_name(uid) end
+                    w = table.concat(names, " & ")
+                end
+                h = h .. ev_line("Finished -- winner: " .. (w or "none") .. ". START runs a new one.", EV_HEAD)
+            end
+        else
+            h = h .. ev_line(#pool_uids() .. " in. Everyone who joins is included when START is pressed.", EV_DIM)
+        end
+    end
+    if ev_active() or (mode == "wso" and wso_state().champ) then
+        h = h .. "<tr><td><input type='button' value='" .. (mode == "wso" and "Reset Champion" or "End Event")
+            .. "' onclick='/endevent' class='ibutton1'/>"
+    end
+    h = h .. "<tr><td><p>&nbsp;</p>"
+
+    -- Everyone else
+    local rows_in, rows_out = "", ""
+    for _, uid in ipairs(GAME.client_order) do
+        local c = GAME.clients[uid]
+        if c and uid ~= a and uid ~= b then
+            if c.rot and not c.is_host then
+                rows_in = rows_in .. make_player_row(c, nil, ev_player_tag(uid))
+            else
+                rows_out = rows_out .. make_player_row(c)
+            end
+        end
+    end
+    if rows_in ~= "" then h = h .. "<tr><td><h2>IN</h2>" .. rows_in end
+    if rows_out ~= "" then h = h .. "<tr><td><h2>WATCHING</h2>" .. rows_out end
+    return h
+end
+
+function build_room_mode_settings_html()
+    local function mbtn(mode)
+        local on = (GAME.room_mode or "standard") == mode
+        return "<td><input type='button' onclick='/toggle:mode:" .. mode .. "' value='" .. ROOM_MODE_BTN[mode]
+            .. "' class='" .. (on and "ibutton2" or "ibutton1") .. "' width=150/>"
+    end
+    local h = "<tr><td align=center><table>"
+        .. "<tr><td colspan=2><b>Room Mode:</b>"
+        .. "<tr>" .. mbtn("standard") .. mbtn("wso")
+        .. "<tr>" .. mbtn("tourney") .. mbtn("rr")
+        .. "<tr>" .. mbtn("drr") .. "<td>"
+        .. "<tr><td colspan=2><div font='font-gui2:12'><i>" .. ROOM_MODE_HELP[GAME.room_mode or "standard"] .. "</i></div>"
+    if ev_active() then
+        h = h .. "<tr><td colspan=2><div font='font-gui2:12' color='#ffcc44'>Event in progress -- end it in the Lobby to change modes.</div>"
+    end
+    return h .. "</table>"
+end
+-- ══ END ROOM MODES ═══════════════════════════════════════════════════════
+
+
 function init()
     global("GAME"); GAME = {}
     g2.console = 0
@@ -357,6 +1161,7 @@ function init()
     }
     for i = 1, 13 do GAME.map_styles.sb[i] = true end  -- all SaandBuff versions on by default
     GAME.game_mode   = "standard"  
+    GAME.room_mode   = "standard"   -- standard / wso / tourney / rr / drr (see ROOM MODES)
 
     global("rec_clock");        rec_clock        = 0
     global("rec_frame");        rec_frame        = 0
@@ -654,7 +1459,7 @@ function hex_darken(col)
     return string.format("%02x%02x%02x", r, g, b)
 end
 
-function make_player_row(c, opponent_uid)
+function make_player_row(c, opponent_uid, tag_override)
     local s   = STATS[c.uid]
     local elo_str = s and (" · " .. s.elo .. " ELO") or ""
     local sfx = s and streak_emoji(s.streak) or ""
@@ -677,7 +1482,7 @@ function make_player_row(c, opponent_uid)
                "<div font='font-outline:11' color='#aaaaaa'>" .. elo_str:gsub("^ · ","") .. h2h_str .. "</div>" ..
                "</table>"
     else
-        local tag = c.is_host and "[host]" or "[away]"
+        local tag = tag_override or (c.is_host and "[host]" or "[away]")
         return "<tr><td><table width=330 background='white:#2b2b2b'><tr>" ..
                "<td width=6><img src='blank' width=6 height=5>" ..
                "<td align=left clip=1><div font='font-outline:18' color='#777777'>" ..
@@ -688,6 +1493,16 @@ function make_player_row(c, opponent_uid)
 end
 
 function build_lobby_html(client)
+    if is_event_mode() then
+        local batch_class = GAME.batch_mode and "ibutton2" or "ibutton1"
+        local batch_label = GAME.batch_mode and "Batch REC: ON" or "Batch REC: OFF"
+        local batch_html = "<tr><td><p>&nbsp;</p><tr><td><input type='button' onclick='/batch' value='"
+            .. batch_label .. "' class='" .. batch_class .. "'/>"
+        if GAME.batch_mode then
+            batch_html = batch_html .. "<tr><td><input type='button' onclick='/endbatch' value='End Batch + Upload' class='ibutton1'/>"
+        end
+        return "<tr><td align=center><h2>1v1 Replays</h2>" .. build_event_lobby_html(client) .. batch_html
+    end
     local queued    = count_queued()
     local is_queued = (client.status == "queue") and not (client.is_host == true)
     local is_away   = (client.status == "away")  or  (client.is_host == true)
@@ -746,6 +1561,7 @@ end
 function build_status_html(client)
     local html = "<table width=340>"
     html = html .. "<tr><td><h2>Settings</h2>"
+    html = html .. build_room_mode_settings_html() .. "<tr><td><p>&nbsp;</p>"
 
     -- ── Ranked mode: label + toggle button (clearer than a single ambiguous button) ──
     html = html .. "<tr><td align=center><table><tr>"
@@ -1192,6 +2008,7 @@ window  = "lobby",
 is_host = is_host,
 }
 GAME.client_order[#GAME.client_order + 1] = e.uid
+if is_event_mode() then ev_on_join(e.uid); ev_apply_statuses() end
 clients_assign_colors()
 ensure_stats(e.uid, e.name, int_to_hex(GAME.clients[e.uid].color or 0x555555))
 net_send("", "message", e.name .. " joined")
@@ -1209,6 +2026,10 @@ net_send("", "sfx",    "leave")
 GAME.clients[e.uid] = nil
 for i, uid in ipairs(GAME.client_order) do
 if uid == e.uid then table.remove(GAME.client_order, i); break end
+end
+if is_event_mode() then
+local ok, err = pcall(ev_on_leave, e.uid)
+if not ok then print("[ERROR] ev_on_leave: " .. tostring(err)) end
 end
 clients_assign_colors()
 broadcast_html()
@@ -1347,7 +2168,20 @@ end
 if e.type == "net:message" then
 local v = e.value
 local lv = v:lower():gsub("^%s+","")
-if lv:find("^/play") == 1 then
+if lv:find("^/play") == 1 and is_event_mode() then
+local c = GAME.clients[e.uid]
+if c and c.is_host then
+net_send(e.uid, "message", "Host account is permanently away.")
+elseif c then
+ev_on_play(e.uid)
+broadcast_html()
+end
+elseif lv == "/away" and is_event_mode() then
+if GAME.clients[e.uid] then
+ev_on_away(e.uid)
+broadcast_html()
+end
+elseif lv:find("^/play") == 1 then
 local c = GAME.clients[e.uid]
 if c and not c.is_host then
 if c.status ~= "queue" and count_queued() >= 2 then
@@ -1445,6 +2279,12 @@ function obj:loop(t)
             if GAME.pending_countdown <= 0 then
                 GAME.pending_countdown = nil
                 GAME.countdown_accum   = nil
+                if is_event_mode() then ev_apply_statuses() end
+                if is_event_mode() and count_queued() < 2 then
+                    net_send("", "message", "Match cancelled -- a player stepped out. Press START again.")
+                    broadcast_html()
+                    return
+                end
                 GAME.engine:next(GAME.modules.galcon)
             else
                 net_send("", "message", GAME.pending_countdown .. "...")
@@ -1463,7 +2303,9 @@ local lv = e.value:lower():gsub("^%s+","")
 -- ── Unified /toggle: command ─────────────────────────────────────
 if lv:sub(1,8) == "/toggle:" then
                 local what = lv:sub(9)
-                if what == "ranked" then
+                if what:sub(1,5) == "mode:" then
+                    set_room_mode(what:sub(6), e.name or "?")
+                elseif what == "ranked" then
                     GAME.ranked = not GAME.ranked
                     net_send("","message","[RANKED] Ranked " .. (GAME.ranked and "ON - ElimV2 rotation, settings locked." or "OFF - custom map pool active."))
                 elseif what == "distance" then
@@ -1518,7 +2360,16 @@ net_send(e.uid, "message", "No batch is currently active.")
 end
 return
 end
-if lv == "/start" or lv:find("^/start") == 1 then
+if lv == "/endevent" then
+ev_cancel(e.name or "?")
+ev_apply_statuses()
+broadcast_html()
+return
+end
+if (lv == "/start" or lv:find("^/start") == 1) and is_event_mode() then
+if ev_on_start(e.name or "?") then begin_match_countdown() end
+broadcast_html()
+elseif lv == "/start" or lv:find("^/start") == 1 then
 if count_queued() >= 1 then
 begin_match_countdown()
 else
@@ -1569,7 +2420,7 @@ end
 elseif lv == "/gg" then
 net_send("", "message", e.name .. ": gg")
 end
-if lv:find("^/play") == 1 or lv == "/away" then
+if (lv:find("^/play") == 1 or lv == "/away") and not is_event_mode() then
 if count_queued() >= 2 then
 begin_match_countdown()
 end
@@ -1690,6 +2541,12 @@ pcall(function()
     net_send("", "sfx", "stop")
     for _, c in pairs(GAME.clients) do
         if c.status == "play" then c.status = "queue" end
+    end
+    if is_event_mode() then
+        local ok, err = pcall(ev_on_result, winner_uid, GAME.player_uids or {})
+        if not ok then print("[ERROR] ev_on_result: " .. tostring(err)) end
+        ok, err = pcall(ev_apply_statuses, true)
+        if not ok then print("[ERROR] ev_apply_statuses: " .. tostring(err)) end
     end
     clients_assign_colors()
     GAME.engine:next(GAME.modules.lobby)
@@ -1939,6 +2796,14 @@ c.status = "away"
 end
 end
 end
+if is_event_mode() and player_clients[2] then
+-- Event schedule decides sides (double round robin swaps them in leg 2;
+-- winner stays on keeps the champion as P1).
+local ea = ev_next_pair()
+if ea and player_clients[2].uid == ea then
+player_clients[1], player_clients[2] = player_clients[2], player_clients[1]
+end
+end
 for i, c in ipairs(player_clients) do
 local col
 if player_custom_colors[c.uid] then
@@ -1965,6 +2830,10 @@ end
 GAME.player_uids = {}
 for i2, c2 in ipairs(player_clients) do
 GAME.player_uids[i2] = c2.uid
+end
+do
+local ok, err = pcall(ev_on_game_start, GAME.player_uids)
+if not ok then print("[ERROR] ev_on_game_start: " .. tostring(err)) end
 end
 G.p1 = G.users[1]
 G.p2 = G.users[2]
@@ -2012,6 +2881,7 @@ version=1, w=SW, h=SH,
 style=GAME.last_style, style_ver=GAME.last_ver,
 distance_change=(GAME.distance_change and true or false),
 game_mode=GAME.game_mode, ranked=(GAME.ranked and true or false),
+room_mode=GAME.room_mode or "standard", event_label=GAME.ev_game_label or "",
 },
 summary={},
 })

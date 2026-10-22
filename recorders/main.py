@@ -1222,7 +1222,7 @@ def recorder_thread(loop):
                     "session":      session_id,
                 }
                 # Room settings the mod sends (map style, mode, ranked) — keep them.
-                for k in ("style", "style_ver", "distance_change", "game_mode", "ranked"):
+                for k in ("style", "style_ver", "distance_change", "game_mode", "ranked", "room_mode", "event_label"):
                     if k in payload:
                         init_obj[k] = payload[k]
 
