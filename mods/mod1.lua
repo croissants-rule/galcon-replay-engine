@@ -453,10 +453,28 @@ function stats_load(list)
     return n
 end
 
+-- Who is in the room right now, for the Discord bot's lobby alerts and
+-- player-count indicator. `ts` lets the bot tell an empty lobby from a room
+-- that has been closed (no heartbeat). Never used by the replay files.
+function room_snapshot()
+    local players = {}
+    for _, uid in ipairs((GAME and GAME.client_order) or {}) do
+        local c = GAME.clients[uid]
+        if c and not c.is_host then
+            players[#players + 1] = { n = c.name, s = c.status }
+        end
+    end
+    return {
+        ts = os.time(), players = players,
+        in_game = (g2.state == "play"), mode = (GAME and GAME.room_mode) or "standard",
+    }
+end
+
 -- Every g2.data write goes through here so the saved stats and the server
 -- port survive the replay recorder's chunk writes.
 function g2data_write(tbl)
     tbl.stats = stats_serialize()
+    tbl.room  = room_snapshot()
     if GAME and GAME.data and GAME.data.port then tbl.port = GAME.data.port end
     g2.data = json.encode(tbl)
 end
@@ -2154,6 +2172,7 @@ is_host = is_host,
 GAME.client_order[#GAME.client_order + 1] = e.uid
 if is_event_mode() then ev_on_join(e.uid); ev_apply_statuses() end
 clients_assign_colors()
+pcall(stats_save)   -- refresh the room snapshot for the Discord lobby alert
 ensure_stats(e.uid, e.name, int_to_hex(GAME.clients[e.uid].color or 0x555555))
 net_send("", "message", e.name .. " joined")
 net_send("", "sfx",    "join")
@@ -2176,6 +2195,7 @@ local ok, err = pcall(ev_on_leave, e.uid)
 if not ok then print("[ERROR] ev_on_leave: " .. tostring(err)) end
 end
 clients_assign_colors()
+pcall(stats_save)   -- refresh the room snapshot for the Discord lobby alert
 broadcast_html()
 end
 local function switch_window(win)
@@ -3176,6 +3196,13 @@ function register_init()
     local obj               = GAME.modules.register
     function obj:loop(t)
         if GAME.module == GAME.modules.menu then return end
+        -- Heartbeat: re-save the room snapshot every 30 s so the Discord bot
+        -- knows the room is still open (it treats an old snapshot as closed).
+        self.hb = (self.hb or 0) - t
+        if self.hb <= 0 then
+            self.hb = 30
+            pcall(stats_save)
+        end
         self.t = self.t - t
         if self.t <= 0 then
             self.t = 60

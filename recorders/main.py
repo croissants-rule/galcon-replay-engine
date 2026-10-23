@@ -39,6 +39,18 @@ STICKY_PANEL       = True         # re-post the browser panel as the newest mess
 READ_OTHER_AUTHORS = False        # True = also index replays posted by people/other bots
                                   # (requires "Message Content Intent" ON in the Developer Portal)
 
+# Lobby alerts: the bot posts (and keeps updating) a message when people are in
+# the replay room, pinging a role that anyone can toggle with the 🔔 button.
+LOBBY_ALERTS       = True
+ALERT_CHANNEL_ID   = CHANNEL_ID   # where lobby alerts are posted
+ALERT_ROLE_NAME    = "Lobby Alerts"
+ALERT_COOLDOWN_MIN = 30           # don't ping again within this long after the last ping
+ROOM_HOST_NAME     = "replaybot"  # shown in "add ... as a friend in Galcon 2"
+# Player-count indicator in a channel's name, e.g. "bot-replays-🟢3".
+# Discord allows only 2 renames per 10 minutes, so it lags by up to ~5 min.
+STATUS_CHANNEL_ID  = CHANNEL_ID   # 0 = off
+ROOM_STALE_SEC     = 150          # no heartbeat from the room for this long = room closed
+
 DATA_DIR   = os.path.dirname(OUTPUT_DIR) or '.'
 INDEX_DB   = os.path.join(DATA_DIR, 'replay_index.db')
 CACHE_DIR  = os.path.join(DATA_DIR, 'replay_cache')     # attachments downloaded for exports
@@ -539,6 +551,48 @@ def similar_names(name, limit=25):
     return [(r['name'], r['n']) for r in rows]
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LOBBY PRESENCE  (the room writes a "room" snapshot into mod1.bin)
+# ─────────────────────────────────────────────────────────────────────────────
+LOBBY = {"room": None, "seen": 0.0}   # latest snapshot, written by the recorder thread
+
+
+def lobby_view(room, now):
+    """Snapshot -> (room_open, [player names]). Old snapshot = room closed."""
+    if not isinstance(room, dict):
+        return False, []
+    ts = room.get("ts")
+    if not isinstance(ts, (int, float)) or now - ts > ROOM_STALE_SEC:
+        return False, []
+    names = []
+    for p in room.get("players") or []:
+        if isinstance(p, dict) and p.get("n"):
+            names.append(str(p["n"]))
+    return True, names
+
+
+def status_channel_name(base, n):
+    return f"{base}-🟢{n}" if n > 0 else base
+
+
+def strip_status_suffix(name):
+    return re.sub(r"-🟢\d+$", "", name)
+
+
+def lobby_alert_text(names, mention=""):
+    who = ", ".join(f"**{n}**" for n in names)
+    verb = "is" if len(names) == 1 else "are"
+    return (f"{mention + ' ' if mention else ''}🟢 {who} {verb} in the replay lobby "
+            f"({len(names)} {'player' if len(names) == 1 else 'players'})!\n"
+            f"-# To join: add **{ROOM_HOST_NAME}** as a friend in Galcon 2 — the room shows in your server list. "
+            f"Toggle these pings with 🔔 on the Replay Browser panel.")
+
+
+def lobby_closed_text(session_names, minutes, closed):
+    who = ", ".join(session_names) if session_names else "nobody"
+    state = "Room closed" if closed else "Lobby empty"
+    return f"⚪ {state} — session lasted {minutes} min ({who})."
+
+# ─────────────────────────────────────────────────────────────────────────────
 # DISCORD
 # ─────────────────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
@@ -1028,6 +1082,125 @@ class PanelView(discord.ui.View):
         view = GameListView("All games", ids)
         await interaction.response.send_message(view.content(), view=view, ephemeral=True)
 
+    @discord.ui.button(label="🔔 Lobby alerts", style=discord.ButtonStyle.secondary, custom_id="rb:alerts", row=1)
+    async def lobby_alerts(self, interaction, button):
+        await toggle_alert_role(interaction)
+
+
+async def get_alert_role(guild, create=True):
+    role = discord.utils.get(guild.roles, name=ALERT_ROLE_NAME)
+    if role is None and create:
+        role = await guild.create_role(name=ALERT_ROLE_NAME, mentionable=True,
+                                       reason="Replay lobby alerts (toggled with the 🔔 button)")
+        print(f"[lobby] created role @{ALERT_ROLE_NAME}")
+    return role
+
+
+async def toggle_alert_role(interaction):
+    if not interaction.guild or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Use this in the server.", ephemeral=True); return
+    try:
+        role = await get_alert_role(interaction.guild)
+        if role in interaction.user.roles:
+            await interaction.user.remove_roles(role, reason="Lobby alerts off")
+            msg = "🔕 Lobby alerts **off** — you won't be pinged when people are in the replay lobby."
+        else:
+            await interaction.user.add_roles(role, reason="Lobby alerts on")
+            msg = ("🔔 Lobby alerts **on** — you'll be pinged when people are in the replay lobby. "
+                   "Press the button again to turn them off.")
+    except discord.Forbidden:
+        msg = ("I can't manage roles here yet. A server admin needs to give the bot **Manage Roles** "
+               f"and put its role above **@{ALERT_ROLE_NAME}**.")
+        print("[lobby] missing Manage Roles permission for the alert role")
+    await interaction.response.send_message(msg, ephemeral=True)
+
+
+async def lobby_loop():
+    """Keep the lobby alert message, bot status and channel-name counter in sync."""
+    await dc.wait_until_ready()
+    alert_msg = None
+    session_start = 0.0
+    session_names = []
+    last_ping = float(meta_get('lobby_last_ping') or 0)
+    last_names = None
+    last_open = None
+    status_base = None
+    last_rename = 0.0
+    rename_ok = True
+    status_ch = None
+    if STATUS_CHANNEL_ID:
+        try:
+            status_ch = await get_channel(STATUS_CHANNEL_ID)
+            status_base = strip_status_suffix(status_ch.name)
+        except Exception as ex:
+            print(f"[lobby] status channel unavailable: {ex}")
+    alert_ch = None
+    if LOBBY_ALERTS:
+        try:
+            alert_ch = await get_channel(ALERT_CHANNEL_ID)
+        except Exception as ex:
+            print(f"[lobby] alert channel unavailable: {ex}")
+
+    while not dc.is_closed():
+        try:
+            now = time.time()
+            room_open, names = lobby_view(LOBBY["room"], now)
+
+            if names != last_names or room_open != last_open:
+                # Bot status line in the member list.
+                if not room_open:
+                    activity = None
+                elif names:
+                    activity = discord.Game(name=f"{len(names)} in the replay lobby")
+                else:
+                    activity = discord.Game(name="replay lobby open (empty)")
+                await dc.change_presence(activity=activity)
+
+                # Alert message: post on first player, edit as people come and go.
+                if alert_ch:
+                    for n in names:
+                        if n not in session_names:
+                            session_names.append(n)
+                    if names and alert_msg is None:
+                        mention = ""
+                        if now - last_ping >= ALERT_COOLDOWN_MIN * 60:
+                            try:
+                                role = await get_alert_role(alert_ch.guild)
+                                mention = role.mention if role else ""
+                            except discord.Forbidden:
+                                mention = ""
+                        alert_msg = await alert_ch.send(
+                            lobby_alert_text(names, mention),
+                            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False))
+                        session_start = now
+                        if mention:
+                            last_ping = now
+                            meta_set('lobby_last_ping', int(now))
+                        print(f"[lobby] alert posted ({len(names)} in lobby{', pinged' if mention else ''})")
+                    elif names and alert_msg is not None:
+                        await alert_msg.edit(content=lobby_alert_text(names))   # edits never re-ping
+                    elif not names and alert_msg is not None:
+                        minutes = max(1, round((now - session_start) / 60))
+                        await alert_msg.edit(content=lobby_closed_text(session_names, minutes, not room_open))
+                        alert_msg = None
+                        session_names = []
+                last_names, last_open = names, room_open
+
+            # Channel-name counter (rate-limited by Discord: 2 renames / 10 min).
+            if status_ch and status_base and rename_ok:
+                want = status_channel_name(status_base, len(names))
+                if status_ch.name != want and now - last_rename >= 300:
+                    try:
+                        await status_ch.edit(name=want, reason="Replay lobby player count")
+                        last_rename = now
+                        print(f"[lobby] channel renamed -> #{want}")
+                    except discord.Forbidden:
+                        rename_ok = False
+                        print("[lobby] can't rename the channel (bot needs Manage Channels) -- counter disabled")
+        except Exception as ex:
+            print(f"[lobby] error: {ex}")
+        await asyncio.sleep(5)
+
 
 def panel_embed():
     return discord.Embed(
@@ -1037,7 +1210,9 @@ def panel_embed():
                      "**👤 By player** — a player's games, or only two players' games against each other\n"
                      "**🕐 All games** — everything, newest first\n\n"
                      "Lists are private to you. Select games (or Select all) and Export — the bot sends "
-                     "you a batch file to open in Replay Viewer Pro.\n"
+                     "you a batch file to open in Replay Viewer Pro.\n\n"
+                     f"**🔔 Lobby alerts** — get pinged when people are in the replay lobby (press again to stop).\n"
+                     f"**Want to play?** Add **{ROOM_HOST_NAME}** as a friend in Galcon 2 and the room shows in your server list.\n"
                      "-# Lost this message? Type **/replays** anywhere in the server."),
         color=0x00ff88)
 
@@ -1106,6 +1281,8 @@ async def on_ready():
         dc.loop.create_task(backfill(await get_channel(CHANNEL_ID)))
     except Exception as ex:
         print(f"[backfill] could not start: {ex}")
+    if LOBBY_ALERTS or STATUS_CHANNEL_ID:
+        dc.loop.create_task(lobby_loop())
 
 def queue_upload(path, label, loop):
     if CHANNEL_ID and BOT_TOKEN:
@@ -1165,6 +1342,11 @@ def recorder_thread(loop):
             data = read_bin()
             if not data:
                 time.sleep(0.1); continue
+
+            # Latest lobby snapshot for the Discord alerts / player count.
+            if isinstance(data.get("room"), dict):
+                LOBBY["room"] = data["room"]
+                LOBBY["seen"] = time.time()
 
             # Back up the room's saved stats whenever they change.
             try:
