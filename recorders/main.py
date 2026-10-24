@@ -20,7 +20,7 @@ Stop:    Ctrl+C
 """
 
 import json, os, re, time, asyncio, threading, math, gzip, shutil, sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 import discord
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +50,10 @@ ROOM_HOST_NAME     = "replaybot"  # shown in "add ... as a friend in Galcon 2"
 # Discord allows only 2 renames per 10 minutes, so it lags by up to ~5 min.
 STATUS_CHANNEL_ID  = CHANNEL_ID   # 0 = off
 ROOM_STALE_SEC     = 150          # no heartbeat from the room for this long = room closed
+# A Discord server event runs while people are in the lobby, so the
+# "event happening now" banner shows at the top of the channel list.
+LOBBY_EVENT        = True
+LOBBY_EVENT_EDIT_SEC = 15         # update the event's player count at most this often
 
 DATA_DIR   = os.path.dirname(OUTPUT_DIR) or '.'
 INDEX_DB   = os.path.join(DATA_DIR, 'replay_index.db')
@@ -587,6 +591,25 @@ def lobby_alert_text(names, mention=""):
             f"Toggle these pings with 🔔 on the Replay Browser panel.")
 
 
+def lobby_status_line(now=None):
+    """One-line live lobby status for the top of the Replay Browser panel."""
+    room_open, names = lobby_view(LOBBY["room"], time.time() if now is None else now)
+    if not room_open:
+        return "⚫ **Replay room is closed.**"
+    if not names:
+        return "⚪ **Replay room is open** — lobby empty."
+    who = ", ".join(discord.utils.escape_markdown(n) for n in names)
+    return f"🟢 **{len(names)} in the lobby:** {who}"
+
+
+def lobby_event_fields(names):
+    n = len(names)
+    name = f"🟢 Replay lobby: {n} {'player' if n == 1 else 'players'}"
+    desc = ("In the lobby now: " + ", ".join(names) + "\n\n"
+            f"To join: add {ROOM_HOST_NAME} as a friend in Galcon 2 — the room shows in your server list.")
+    return name, desc[:1000]
+
+
 def lobby_closed_text(session_names, minutes, closed):
     who = ", ".join(session_names) if session_names else "nobody"
     state = "Room closed" if closed else "Lobby empty"
@@ -1115,6 +1138,78 @@ async def toggle_alert_role(interaction):
     await interaction.response.send_message(msg, ephemeral=True)
 
 
+async def update_panel_status():
+    """Re-render the panel so its top line shows the live lobby count."""
+    async with _panel_lock:
+        mid, cid = meta_get('panel_message_id'), meta_get('panel_channel_id')
+        if not (mid and cid):
+            return
+        try:
+            ch = await get_channel(int(cid))
+            await ch.get_partial_message(int(mid)).edit(embed=panel_embed(), view=PanelView())
+        except discord.NotFound:
+            pass
+
+
+class LobbyEvent:
+    """A Discord server event that is live exactly while people are in the lobby."""
+    def __init__(self):
+        self.enabled = LOBBY_EVENT
+        self.event = None
+        self.shown = None
+        self.last_edit = 0.0
+
+    async def adopt(self, guild):
+        """After a restart, pick up (or tidy away) the event this bot left running."""
+        eid = meta_get('lobby_event_id')
+        if not (self.enabled and eid):
+            return
+        try:
+            ev = await guild.fetch_scheduled_event(int(eid))
+            if ev.status == discord.EventStatus.active:
+                self.event = ev
+            elif ev.status == discord.EventStatus.scheduled:
+                await ev.delete()
+        except (discord.NotFound, ValueError):
+            pass
+        meta_set('lobby_event_id', '')
+
+    async def sync(self, guild, names, now):
+        if not self.enabled or guild is None:
+            return
+        try:
+            if names:
+                fields = lobby_event_fields(names)
+                if self.event is None:
+                    start = discord.utils.utcnow() + timedelta(seconds=5)
+                    ev = await guild.create_scheduled_event(
+                        name=fields[0], description=fields[1], start_time=start,
+                        end_time=start + timedelta(hours=24),
+                        entity_type=discord.EntityType.external,
+                        privacy_level=discord.PrivacyLevel.guild_only,
+                        location=f"Galcon 2 — friend {ROOM_HOST_NAME}",
+                        reason="Replay lobby is active")
+                    self.event = await ev.start(reason="Replay lobby is active")
+                    meta_set('lobby_event_id', self.event.id)
+                    self.shown, self.last_edit = fields, now
+                    print("[lobby] event started")
+                elif fields != self.shown and now - self.last_edit >= LOBBY_EVENT_EDIT_SEC:
+                    self.event = await self.event.edit(name=fields[0], description=fields[1])
+                    self.shown, self.last_edit = fields, now
+            elif self.event is not None:
+                ev, self.event, self.shown = self.event, None, None
+                meta_set('lobby_event_id', '')
+                await ev.end(reason="Replay lobby is empty")
+                print("[lobby] event ended")
+        except discord.Forbidden:
+            self.enabled = False
+            print("[lobby] can't manage server events (bot needs Manage Events) -- event disabled")
+        except discord.NotFound:
+            self.event, self.shown = None, None      # someone deleted it -- recreate next time
+        except discord.HTTPException as ex:
+            print(f"[lobby] event error: {ex}")
+
+
 async def lobby_loop():
     """Keep the lobby alert message, bot status and channel-name counter in sync."""
     await dc.wait_until_ready()
@@ -1140,6 +1235,17 @@ async def lobby_loop():
             alert_ch = await get_channel(ALERT_CHANNEL_ID)
         except Exception as ex:
             print(f"[lobby] alert channel unavailable: {ex}")
+    guild = None
+    try:
+        guild = (await get_channel(PANEL_CHANNEL_ID)).guild
+    except Exception as ex:
+        print(f"[lobby] server unavailable for the lobby event: {ex}")
+    lobby_event = LobbyEvent()
+    if guild is not None:
+        try:
+            await lobby_event.adopt(guild)
+        except Exception as ex:
+            print(f"[lobby] event check failed: {ex}")
 
     while not dc.is_closed():
         try:
@@ -1147,6 +1253,12 @@ async def lobby_loop():
             room_open, names = lobby_view(LOBBY["room"], now)
 
             if names != last_names or room_open != last_open:
+                # Live count at the top of the Replay Browser panel.
+                try:
+                    await update_panel_status()
+                except Exception as ex:
+                    print(f"[lobby] panel status error: {ex}")
+
                 # Bot status line in the member list.
                 if not room_open:
                     activity = None
@@ -1186,6 +1298,9 @@ async def lobby_loop():
                         session_names = []
                 last_names, last_open = names, room_open
 
+            # Server event: live while anyone is in the lobby (throttled edits).
+            await lobby_event.sync(guild, names, now)
+
             # Channel-name counter (rate-limited by Discord: 2 renames / 10 min).
             if status_ch and status_base and rename_ok:
                 want = status_channel_name(status_base, len(names))
@@ -1205,7 +1320,8 @@ async def lobby_loop():
 def panel_embed():
     return discord.Embed(
         title="🎮 Replay Browser",
-        description=("Find and download replays from this channel.\n\n"
+        description=(lobby_status_line() + "\n\n"
+                     "Find and download replays from this channel.\n\n"
                      "**📅 By date** — every game played on a day\n"
                      "**👤 By player** — a player's games, or only two players' games against each other\n"
                      "**🕐 All games** — everything, newest first\n\n"
@@ -1281,7 +1397,7 @@ async def on_ready():
         dc.loop.create_task(backfill(await get_channel(CHANNEL_ID)))
     except Exception as ex:
         print(f"[backfill] could not start: {ex}")
-    if LOBBY_ALERTS or STATUS_CHANNEL_ID:
+    if LOBBY_ALERTS or STATUS_CHANNEL_ID or LOBBY_EVENT:
         dc.loop.create_task(lobby_loop())
 
 def queue_upload(path, label, loop):
