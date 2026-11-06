@@ -2,6 +2,10 @@ strict(true)
 
 local ROOM_TITLE    = "1v1 Replays"
 local DEFAULT_PORT  = "23099"
+-- Host the room automatically about a second after the mod loads, so it can
+-- be started remotely (Steam launch option -mod ...) with no Start Server click.
+-- Set to false to get the old manual menu back.
+local AUTO_HOST     = true
 local POSITION_RATE = 1   
 local CHUNK_SIZE    = 200  
 local WIN_CHECK_DELAY = 8.0
@@ -2113,14 +2117,29 @@ function menu_init()
             </table>
         ]]
         g2.state = "menu"
+        self.auto_t = 0
+        self.hosted = false
+        if AUTO_HOST then
+            print("[auto-host] starting the room on port " .. tostring(g2.form.port) .. " in 1 second")
+        end
     end
-    function obj:loop(t) end
+    function obj:host()
+        if self.hosted then return end
+        self.hosted = true
+        GAME.data.port = g2.form.port or DEFAULT_PORT
+        g2data_write(GAME.data)
+        g2.net_host(GAME.data.port)
+        GAME.engine:next(GAME.modules.lobby)
+    end
+    function obj:loop(t)
+        if AUTO_HOST and not self.hosted then
+            self.auto_t = (self.auto_t or 0) + (t or 0)
+            if self.auto_t >= 1 then self:host() end
+        end
+    end
     function obj:event(e)
         if e.type == "onclick" and e.value == "host" then
-            GAME.data.port = g2.form.port or DEFAULT_PORT
-            g2data_write(GAME.data)
-            g2.net_host(GAME.data.port)
-            GAME.engine:next(GAME.modules.lobby)
+            self:host()
         end
     end
 end
